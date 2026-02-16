@@ -1,0 +1,18 @@
+# Ignore Python garbage
+__pycache__/
+*.pyc
+
+# Ignore Virtual Environments
+.venv/
+venv/
+
+# Ignore Unreal Engine Generated Files (Huge!)
+ue5_project/Binaries/
+ue5_project/Intermediate/
+ue5_project/Saved/
+ue5_project/DerivedDataCache/
+ue5_project/Build/
+
+# Ignore System junk
+.DS_Store
+Thumbs.db
