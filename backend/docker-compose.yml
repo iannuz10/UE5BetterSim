@@ -4,7 +4,8 @@ services:
     container_name: sim_brain
     # This allows the container to talk to your Windows host easily
     ports:
-      - "7447:7447" 
+      - "7447:7447/tcp" 
+      - "7447:7447/udp"
     volumes:
       # This maps your Windows folder to the Linux folder
       # Any change you make in Windows instantly appears in Linux

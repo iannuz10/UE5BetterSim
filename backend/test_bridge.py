@@ -4,6 +4,9 @@ import json
 
 def test_bridge():
     conf = zenoh.Config()
+    
+    conf.insert_json5("listen/endpoints", "['tcp/0.0.0.0:7447']")
+
     print("[Docker] Opeing Zenoh session...")
     session = zenoh.open(conf)
 
