@@ -90,7 +90,13 @@ void UZenohComponent::Subscribe(FString NewTopic)
 
 void UZenohComponent::HandleZenohMessage(const FString& Payload)
 {
-    UE_LOG(LogTemp, Warning, TEXT("[Zenoh DEBUG] Raw Payload: %s"), *Payload);
+    // UE_LOG(LogTemp, Warning, TEXT("[Zenoh DEBUG] Raw Payload: %s"), *Payload);
+
+    // This allows Blueprints to handle simple commands like "PING"
+    if (OnMessageReceived.IsBound())
+    {
+        OnMessageReceived.Broadcast(Payload);
+    }
 
     // Try to parse as JSON
     TSharedPtr<FJsonObject> JsonObject;
@@ -98,7 +104,7 @@ void UZenohComponent::HandleZenohMessage(const FString& Payload)
 
     if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
     {
-        UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] JSON Failed to Deserialize! Is the format correct?"));
+        // UE_LOG(LogTemp, Warning, TEXT("[Zenoh ERROR] JSON Failed to Deserialize! Is the format correct?"));
         return;
     }
 
