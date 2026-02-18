@@ -28,16 +28,29 @@ public class ZenohBridge : ModuleRules
 		PublicIncludePaths.Add(Path.Combine(ThirdPartyPath, "include"));
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
-		{
-			// 2. Link the .lib (Import Library)
-			PublicAdditionalLibraries.Add(Path.Combine(LibPath, "zenohc.lib"));
+        {
+            // 1. Link the Lib
+            PublicAdditionalLibraries.Add(Path.Combine(LibPath, "zenohc.lib"));
 
-			// 3. DELAY LOAD the .dll
-			// This stops the engine from crashing if the DLL is missing at startup
-			PublicDelayLoadDLLs.Add("zenohc.dll");
+            // 2. Delay Load the DLL
+            PublicDelayLoadDLLs.Add("zenohc.dll");
 
-			// 4. Ensure the DLL is copied to the Binary folder
-			RuntimeDependencies.Add("$(BinaryOutputDir)/zenohc.dll", Path.Combine(BinPath, "zenohc.dll"));
-		}
+            // 3. AUTOMATIC COPY FIX (Corrected)
+            // Source: Plugins/ZenohBridge/Source/ThirdParty/bin/zenohc.dll
+            string DllSource = Path.Combine(BinPath, "zenohc.dll");
+            
+            // Destination 1: Project Binaries (Where the .exe lives)
+            // We use ModuleDirectory to go up: Plugins/ZenohBridge/Source/ZenohBridge -> ProjectRoot/Binaries/Win64
+            string ProjectBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Binaries", "Win64"));
+            string DllDest = Path.Combine(ProjectBinaries, "zenohc.dll");
+
+            // Destination 2: Plugin Binaries (Where the Editor looks for plugin DLLs)
+            string PluginBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "Binaries", "Win64"));
+            string PluginDllDest = Path.Combine(PluginBinaries, "zenohc.dll");
+
+            // Tell Unreal to copy it to BOTH locations
+            RuntimeDependencies.Add(DllDest, DllSource);
+            RuntimeDependencies.Add(PluginDllDest, DllSource);
+        }
 	}
 }
