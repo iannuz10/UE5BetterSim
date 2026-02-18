@@ -26,7 +26,6 @@ struct FZenohState
 };
 
 // --- CALLBACK WRAPPER ---
-// FIX 2: Correct signature matching Zenoh 1.0.0+ (struct z_loaned_sample_t*)
 void zenoh_pimpl_callback(struct z_loaned_sample_t* sample, void* context)
 {
     // 1. Get Payload
@@ -72,11 +71,11 @@ bool FZenohBackend::Initialize()
     z_config_default(&config);
 
     // --- FIX: FORCE CONNECTION TO DOCKER ---
-    // We explicitly tell Zenoh to connect to localhost:7447 (where Docker is listening)
-    // We borrow the config mutably to modify it
-    if (zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", "['tcp/127.0.0.1:7447']") < 0)
+    // Tell Zenoh to connect to localhost:7447 (where Docker is listening) (TESTING ONLY)
+    // Borrow the config mutably to modify it
+    if (zc_config_insert_json5(z_config_loan_mut(&config), "listen/endpoints", "['tcp/0.0.0.0:7447']") < 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Failed to set connect endpoint config!"));
+        UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Failed to set listen endpoint config!"));
     }
     // ---------------------------------------
 
@@ -140,7 +139,7 @@ void FZenohBackend::Subscribe(const FString& Topic, FOnMessageCallback Callback)
     z_view_keyexpr_from_str(&key, TopicUTF.Get());
 
     struct z_owned_closure_sample_t closure;
-    // Now this matches because zenoh_pimpl_callback has the right type
+
     z_closure_sample(&closure, zenoh_pimpl_callback, NULL, HeapCallback);
 
     z_declare_subscriber(z_session_loan(&State->Session), &State->Subscriber, z_view_keyexpr_loan(&key), (struct z_moved_closure_sample_t*)&closure, &sub_opts);

@@ -15,7 +15,9 @@ public class ZenohBridge : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
-				"Projects"
+				"Projects",
+				"Json",
+				"JsonUtilities"
 			}
 		);
 
@@ -35,16 +37,16 @@ public class ZenohBridge : ModuleRules
             // 2. Delay Load the DLL
             PublicDelayLoadDLLs.Add("zenohc.dll");
 
-            // 3. AUTOMATIC COPY FIX (Corrected)
+            // 3. AUTOMATIC COPY 
             // Source: Plugins/ZenohBridge/Source/ThirdParty/bin/zenohc.dll
             string DllSource = Path.Combine(BinPath, "zenohc.dll");
             
-            // Destination 1: Project Binaries (Where the .exe lives)
-            // We use ModuleDirectory to go up: Plugins/ZenohBridge/Source/ZenohBridge -> ProjectRoot/Binaries/Win64
+            // Destination 1: Project Binaries 
+            // Use ModuleDirectory to go up: Plugins/ZenohBridge/Source/ZenohBridge -> ProjectRoot/Binaries/Win64
             string ProjectBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Binaries", "Win64"));
             string DllDest = Path.Combine(ProjectBinaries, "zenohc.dll");
 
-            // Destination 2: Plugin Binaries (Where the Editor looks for plugin DLLs)
+            // Destination 2: Plugin Binaries 
             string PluginBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "Binaries", "Win64"));
             string PluginDllDest = Path.Combine(PluginBinaries, "zenohc.dll");
 

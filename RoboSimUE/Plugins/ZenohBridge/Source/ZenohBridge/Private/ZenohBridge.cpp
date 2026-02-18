@@ -17,7 +17,7 @@ public:
 
         if (Plugin.IsValid())
         {
-            // Happy path: Plugin manager found it
+            // Plugin manager found it
             DllPath = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Source/ThirdParty/bin/zenohc.dll"));
         }
         else
@@ -54,7 +54,7 @@ public:
         }
         else
         {
-            // Don't crash, just scream in the logs
+            // Don't crash, just be mad in the logs
             UE_LOG(LogTemp, Error, TEXT("[ZenohBridge] CRITICAL ERROR: Could not load zenohc.dll. Check paths!"));
         }
     }
