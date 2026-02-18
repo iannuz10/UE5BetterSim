@@ -1,0 +1,16 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Zenoh Bridge",
+	"Description": "A wrapper for the Zenoh C library.",
+	"Category": "Robotics",
+	"CreatedBy": "Antonio Iannone",
+	"Modules": [
+		{
+			"Name": "ZenohBridge",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

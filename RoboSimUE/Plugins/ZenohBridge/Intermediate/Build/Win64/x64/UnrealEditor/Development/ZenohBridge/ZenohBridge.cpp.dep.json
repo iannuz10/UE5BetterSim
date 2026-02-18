@@ -1,0 +1,21 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "d:\\ue5bettersim\\robosimue\\plugins\\zenohbridge\\source\\zenohbridge\\private\\zenohbridge.cpp",
+        "ProvidedModule": "",
+        "PCH": "d:\\ue5bettersim\\robosimue\\intermediate\\build\\win64\\x64\\robosimueeditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "d:\\ue5bettersim\\robosimue\\plugins\\zenohbridge\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\zenohbridge\\definitions.zenohbridge.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\interfaces\\ipluginmanager.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\plugindescriptor.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\custombuildsteps.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\localizationdescriptor.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\moduledescriptor.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\plugindisalloweddescriptor.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\pluginreferencedescriptor.h",
+            "d:\\epic games\\engines\\ue_5.7\\engine\\source\\runtime\\projects\\public\\versescope.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

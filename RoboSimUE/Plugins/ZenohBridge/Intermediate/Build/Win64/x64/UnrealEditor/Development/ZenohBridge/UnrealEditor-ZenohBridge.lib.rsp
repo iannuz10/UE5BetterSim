@@ -1,0 +1,16 @@
+/NOLOGO
+/errorReport:prompt
+/MACHINE:x64
+/SUBSYSTEM:WINDOWS
+/DEF
+/NAME:"UnrealEditor-ZenohBridge.dll"
+/IGNORE:4221
+/NODEFAULTLIB
+"D:/UE5BetterSim/RoboSimUE/Intermediate/Build/Win64/x64/RoboSimUEEditor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.h.obj"
+"D:/UE5BetterSim/RoboSimUE/Plugins/ZenohBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/ZenohBridge/Module.ZenohBridge.gen.cpp.obj"
+"D:/UE5BetterSim/RoboSimUE/Plugins/ZenohBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/ZenohBridge/ZenohBackend.cpp.obj"
+"D:/UE5BetterSim/RoboSimUE/Plugins/ZenohBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/ZenohBridge/ZenohBridge.cpp.obj"
+"D:/UE5BetterSim/RoboSimUE/Plugins/ZenohBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/ZenohBridge/ZenohComponent.cpp.obj"
+"D:/UE5BetterSim/RoboSimUE/Plugins/ZenohBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/ZenohBridge/PerModuleInline.gen.cpp.obj"
+"D:/UE5BetterSim/RoboSimUE/Plugins/ZenohBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/ZenohBridge/Default.rc2.res"
+/OUT:"D:/UE5BetterSim/RoboSimUE/Plugins/ZenohBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/ZenohBridge/UnrealEditor-ZenohBridge.lib"

@@ -1,0 +1,9 @@
+{
+	"RemapUnityFiles": 
+	{
+		"Module.ZenohBridge.gen.cpp.obj": [
+			"ZenohBridge.init.gen.cpp.obj",
+			"ZenohComponent.gen.cpp.obj"
+		]
+	}
+}
