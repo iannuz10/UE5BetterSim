@@ -1,24 +1,29 @@
-# Ignore Python garbage
+# --- Python ---
 __pycache__/
-*.pyc
-
-# Ignore Virtual Environments
+*.py[cod]
 .venv/
 venv/
 
-# Ignore System junk
+# --- Operating System ---
 .DS_Store
 Thumbs.db
 
-# Ignore Unreal Engine Build/Temp Files
+# --- Unreal Engine Project Root ---
 RoboSimUE/Binaries/
 RoboSimUE/Intermediate/
 RoboSimUE/Saved/
 RoboSimUE/DerivedDataCache/
 RoboSimUE/Build/
+
+# --- Plugin Specific ---
+RoboSimUE/Plugins/*/Binaries/
+RoboSimUE/Plugins/*/Intermediate/
+
+# --- Visual Studio / IDE ---
 .vs/
 *.sln
 *.VC.db
 *.opensdf
 *.opendb
 *.sdf
+*.suo
