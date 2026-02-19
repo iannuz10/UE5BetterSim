@@ -23,36 +23,54 @@ public class ZenohBridge : ModuleRules
 
 		string PluginRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", ".."));
 		string ThirdPartyPath = Path.Combine(PluginRoot, "Source", "ThirdParty");
-		string LibPath = Path.Combine(ThirdPartyPath, "lib");
-		string BinPath = Path.Combine(ThirdPartyPath, "bin");
-
-		// 1. Include Headers
-		PublicIncludePaths.Add(Path.Combine(ThirdPartyPath, "include"));
+		string IncludePath = Path.Combine(ThirdPartyPath, "include");
+		
+		// Add Headers
+		PublicIncludePaths.Add(IncludePath);
+		
+		string PlatformFolder = "";
+		string LibFileName = "";
+		string BinaryFileName = "";
+		string SourceBinPath = "";
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
         {
-            // 1. Link the Lib
-            PublicAdditionalLibraries.Add(Path.Combine(LibPath, "zenohc.lib"));
+            PlatformFolder = "Win64";
+            LibFileName = "zenohc.lib";
+            BinaryFileName = "zenohc.dll";
+            // On Windows, DLLs are in 'bin'
+            SourceBinPath = Path.Combine(ThirdPartyPath, "bin", PlatformFolder, BinaryFileName);
+        }
+        else if (Target.Platform == UnrealTargetPlatform.Mac)
+        {
+            PlatformFolder = "Mac";
+            LibFileName = "libzenohc.dylib";
+            BinaryFileName = "libzenohc.dylib"; 
+            SourceBinPath = Path.Combine(ThirdPartyPath, "lib", PlatformFolder, BinaryFileName);
+        }
 
-            // 2. Delay Load the DLL
-            PublicDelayLoadDLLs.Add("zenohc.dll");
+        // 4. Link and Copy 
+        if (!string.IsNullOrEmpty(PlatformFolder))
+        {
+            // A. Link the Lib (Compile time)
+            PublicAdditionalLibraries.Add(Path.Combine(ThirdPartyPath, "lib", PlatformFolder, LibFileName));
 
-            // 3. AUTOMATIC COPY 
-            // Source: Plugins/ZenohBridge/Source/ThirdParty/bin/zenohc.dll
-            string DllSource = Path.Combine(BinPath, "zenohc.dll");
+            // B. Delay Load (Runtime)
+            PublicDelayLoadDLLs.Add(BinaryFileName);
+
+            // C. MANUAL COPY
             
             // Destination 1: Project Binaries 
-            // Use ModuleDirectory to go up: Plugins/ZenohBridge/Source/ZenohBridge -> ProjectRoot/Binaries/Win64
-            string ProjectBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Binaries", "Win64"));
-            string DllDest = Path.Combine(ProjectBinaries, "zenohc.dll");
+            string ProjectBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Binaries", PlatformFolder));
+            string ProjectDest = Path.Combine(ProjectBinaries, BinaryFileName);
 
-            // Destination 2: Plugin Binaries 
-            string PluginBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "Binaries", "Win64"));
-            string PluginDllDest = Path.Combine(PluginBinaries, "zenohc.dll");
+            // Destination 2: Plugin Binaries
+            string PluginBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "Binaries", PlatformFolder));
+            string PluginDest = Path.Combine(PluginBinaries, BinaryFileName);
 
-            // Tell Unreal to copy it to BOTH locations
-            RuntimeDependencies.Add(DllDest, DllSource);
-            RuntimeDependencies.Add(PluginDllDest, DllSource);
+            // Execute Copy
+            RuntimeDependencies.Add(ProjectDest, SourceBinPath);
+            RuntimeDependencies.Add(PluginDest, SourceBinPath);
         }
 	}
 }

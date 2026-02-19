@@ -1,20 +1,48 @@
 #include "ZenohBackend.h"
 #include "Containers/StringConv.h"
-#include "Async/Async.h" // <--- FIX 1: Added this include!
+#include "Async/Async.h"
 
-// --- ISOLATED ZENOH INCLUDES ---
-#include "Windows/AllowWindowsPlatformTypes.h"
+// --- SAFE MACRO MANAGEMENT ---
+
+// 1. Platform-Specific Headers
+#if PLATFORM_WINDOWS
+    #include "Windows/AllowWindowsPlatformTypes.h"
+#endif
+
+// 2. Disable Warnings (Common for both)
 #pragma warning(push)
-#pragma warning(disable: 4191)
-#pragma warning(disable: 4005) // Macro redefinition
+#pragma warning(disable: 4191) 
+#pragma warning(disable: 4005)
 
-#include "zenoh.h"
+// 3. Handle ALIGN conflict
+// Unreal defines ALIGN. Zenoh defines ALIGN.
+#ifdef ALIGN
+    #define UNREAL_ALIGN ALIGN
+    #undef ALIGN
+#endif
 
-#undef ALIGN
+// 4. Include Zenoh
+#include "zenoh.h" 
+
+// 5. Restore ALIGN
+#ifdef ALIGN
+    #undef ALIGN // remove Zenoh's
+#endif
+
+#ifdef UNREAL_ALIGN
+    #define ALIGN UNREAL_ALIGN
+    #undef UNREAL_ALIGN
+#endif
+
 #undef ZENOHC_API
 
-#pragma warning(pop)
-#include "Windows/HideWindowsPlatformTypes.h"
+// 6. Restore Platform Headers
+#if PLATFORM_WINDOWS
+    #pragma warning(pop)
+    #include "Windows/HideWindowsPlatformTypes.h"
+#else
+    #pragma warning(pop)
+#endif
 // ------------------------------
 
 // This struct lives ONLY inside this .cpp file

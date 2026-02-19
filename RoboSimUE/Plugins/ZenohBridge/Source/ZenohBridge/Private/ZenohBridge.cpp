@@ -10,6 +10,20 @@ public:
 
     virtual void StartupModule() override
     {
+        FString LibraryName;
+        FString Subfolder;
+        
+#if PLATFORM_WINDOWS
+        LibraryName = TEXT("zenohc.dll");
+        Subfolder = TEXT("Win64");
+#elif PLATFORM_MAC
+        LibraryName = TEXT("libzenohc.dylib");
+        Subfolder = TEXT("Mac");
+#else
+        UE_LOG(LogTemp, Error, TEXT("[ZenohBridge] Unsupported Platform!"));
+        return;
+#endif
+
         FString DllPath;
 
         // 1. Try to find the plugin safely
