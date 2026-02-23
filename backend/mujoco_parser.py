@@ -6,6 +6,7 @@ import mujoco
 # Configuration Constants
 ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
+STATE_TOPIC = "sim/world/state"
 DEBUG_XML_PATH = "/app/debug_world.xml" 
 
 def generate_mujoco_xml(json_data):
@@ -26,6 +27,8 @@ def generate_mujoco_xml(json_data):
     xml.append('  <worldbody>')
     xml.append('    <light diffuse=".5 .5 .5" pos="0 0 10" dir="0 0 -1"/>')
 
+    dynamic_objects = [] # Keep track of what we need to simulate
+
     # Loop through every object sent from Unreal
     for obj in json_data.get('objects', []):
         name = obj['name']
@@ -44,6 +47,8 @@ def generate_mujoco_xml(json_data):
             
         # PHYSICS OBJECTS (Dynamic)
         else:
+            dynamic_objects.append(name)
+
             xml.append(f'    <!-- {name} -->')
             # The body defines the center of mass and starting position
             xml.append(f'    <body name="{name}" pos="{pos_str}" quat="{quat_str}">')
@@ -64,7 +69,7 @@ def generate_mujoco_xml(json_data):
     xml.append('  </worldbody>')
     xml.append('</mujoco>')
     
-    return "\n".join(xml)
+    return "\n".join(xml), dynamic_objects
 
 def main():
     print("[Python] Starting MuJoCo Zenoh Listener...")
@@ -75,15 +80,19 @@ def main():
     conf.insert_json5("connect/endpoints", f"['{ZENOH_ENDPOINT}']")
     session = zenoh.open(conf)
     
+    # Create a publisher for sending the physics state back
+    state_pub = session.declare_publisher(STATE_TOPIC)
+
     print(f"[Python] Connected! Waiting for world data on '{INIT_TOPIC}'...")
 
     # Flag to keep the loop running until world is loaded
     world_loaded = False
     physics_model = None
     physics_data = None
+    dynamic_bodies = []
 
     def on_init_message(sample):
-        nonlocal world_loaded, physics_model, physics_data
+        nonlocal world_loaded, physics_model, physics_data, dynamic_bodies
         
         # Decode the JSON string sent from Unreal
         payload = sample.payload.to_string()
@@ -91,7 +100,7 @@ def main():
         print(f"\n[Python] Received World Data! ({len(json_data['objects'])} objects found)")
         
         # Generate XML
-        xml_string = generate_mujoco_xml(json_data)
+        xml_string, dynamic_bodies = generate_mujoco_xml(json_data)
         
         # Save to a file so it can be viewed in Windows
         with open(DEBUG_XML_PATH, "w") as f:
@@ -114,9 +123,58 @@ def main():
     while not world_loaded:
         time.sleep(0.1)
         
-    print("[Python] Simulation Loop would start here!")
     # Clean up subscriber since we only need the init message once
     sub.undeclare()
+
+    # ==========================================
+    # THE SIMULATION LOOP
+    # ==========================================
+    print("[Python] Starting Physics Simulation Loop! (Ctrl+C to stop).")
+    
+    # Target 60 FPS update rate to Unreal
+    frame_time = 1.0 / 60.0 
+    
+    try:
+        while True:
+            step_start = time.perf_counter()
+            
+            # 1. Step the Physics Engine (MuJoCo default timestep is 0.002s)
+            # We step it ~8 times to simulate ~0.016s of time (1/60th of a sec)
+            for _ in range(8):
+                mujoco.mj_step(physics_model, physics_data)
+                
+            # 2. Gather the new positions
+            state_dict = {"objects": []}
+            
+            for name in dynamic_bodies:
+                # Get raw MuJoCo arrays
+                mj_pos = physics_data.body(name).xpos
+                mj_quat = physics_data.body(name).xquat # MuJoCo format: [w, x, y, z]
+                
+                # Math Conversion: Back to Unreal Format!
+                # Meters -> Centimeters, and Right-Hand -> Left-Hand (Invert Y)
+                ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
+                
+                # Quat Conversion: [w, x, y, z] -> [-x, y, -z, w] (Revert our earlier inversion)
+                ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
+                
+                state_dict["objects"].append({
+                    "name": name,
+                    "pos": ue_pos,
+                    "quat": ue_quat
+                })
+                
+            # 3. Publish back to Unreal
+            state_pub.put(json.dumps(state_dict))
+            
+            # 4. Sleep to match Real-Time
+            elapsed = time.perf_counter() - step_start
+            sleep_time = frame_time - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+                
+    except KeyboardInterrupt:
+        print("\n[Python] Simulation Stopped by User.")
 
 if __name__ == "__main__":
     main()

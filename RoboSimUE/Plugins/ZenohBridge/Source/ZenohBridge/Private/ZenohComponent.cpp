@@ -90,6 +90,13 @@ void UZenohComponent::Subscribe(FString NewTopic)
 
 void UZenohComponent::HandleZenohMessage(const FString& Payload)
 {
+    // The component's ONLY job is to take the bytes from the network
+    // and hand them to the Blueprint system. Nothing else.
+    if (OnMessageReceived.IsBound())
+    {
+        OnMessageReceived.Broadcast(Payload);
+    }
+    /*
     // UE_LOG(LogTemp, Warning, TEXT("[Zenoh DEBUG] Raw Payload: %s"), *Payload);
 
     // This allows Blueprints to handle simple commands like "PING"
@@ -133,4 +140,5 @@ void UZenohComponent::HandleZenohMessage(const FString& Payload)
     {
         UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Missing Coordinate! HasX: %d, HasY: %d, HasZ: %d"), bHasX, bHasY, bHasZ);
     }
+    */
 }

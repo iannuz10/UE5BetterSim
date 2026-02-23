@@ -14,6 +14,9 @@ class ROBOSIMUE_API USceneExporter : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
-	UFUNCTION(BlueprintCallable, Category = "SceneExporter", meta = (WorldContext = "WorldContextObject"))	
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Export", meta = (WorldContext = "WorldContextObject"))	
 	static FString GenerateWorldJSON(const UObject* WorldContextObject, FName ActorTag);
+
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Import", meta = (WorldContext = "WorldContextObject"))
+	static void ApplyWorldStateJSON(const UObject* WorldContextObject, FName ActorTag, const FString& JsonString);
 };

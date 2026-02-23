@@ -46,23 +46,30 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, FNa
 		QuatArray.Add(MakeShareable(new FJsonValueNumber(SciRot.Z)));
 		ActorJson->SetArrayField("quat", QuatArray);
 
-		// add sizes
-		FVector Origin;
-		FVector BoxExtent;
-		// Get the absolute physical bounds of the actor (false = don't include purely visual bounds)
-		Actor->GetActorBounds(false, Origin, BoxExtent); 
-
-		// Convert the Half-Extent from Centimeters to Meters
-		TArray<TSharedPtr<FJsonValue>> SizeArray;
-		SizeArray.Add(MakeShareable(new FJsonValueNumber(BoxExtent.X / 100.0)));
-		SizeArray.Add(MakeShareable(new FJsonValueNumber(BoxExtent.Y / 100.0))); 
-		SizeArray.Add(MakeShareable(new FJsonValueNumber(BoxExtent.Z / 100.0)));
-		ActorJson->SetArrayField("size", SizeArray);
-
-		// get shape info from StaticMeshComponent if available
 		UStaticMeshComponent* MeshComp = Actor->FindComponentByClass<UStaticMeshComponent>();
 		if (MeshComp && MeshComp->GetStaticMesh())
 		{
+			// 1. Get the raw, unrotated 3D model's bounding box
+			FBox LocalBox = MeshComp->GetStaticMesh()->GetBoundingBox();
+            
+			// 2. Get the Extent (which is already the Half-Size in Centimeters)
+			FVector LocalExtent = LocalBox.GetExtent(); 
+            
+			// 3. Get the Actor's Scale Multiplier
+			FVector ActorScale = Actor->GetActorScale3D();
+            
+			// 4. Calculate the TRUE physical half-size in cm (Immune to rotation!)
+			FVector TrueExtent = LocalExtent * ActorScale;
+            
+			// 5. Convert to MuJoCo format (Centimeters to Meters)
+			TArray<TSharedPtr<FJsonValue>> SizeArray;
+			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.X / 100.0))); 
+			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.Y / 100.0))); 
+			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.Z / 100.0))); 
+            
+			ActorJson->SetArrayField("size", SizeArray);
+
+			// get shape info from StaticMeshComponent if available
 			FString MeshName = MeshComp->GetStaticMesh()->GetName();
 			ActorJson->SetStringField("mesh", MeshName);
 		}
@@ -77,4 +84,59 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, FNa
 	FJsonSerializer::Serialize(RootJson.ToSharedRef(), Writer);
 
 	return OutputString;
+}
+
+void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, FName ActorTag, const FString& JsonString)
+{
+	// Parse JSON String
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to parse JSON!"));
+		return;
+	}
+
+	// Get objects array
+	const TArray<TSharedPtr<FJsonValue>>* ObjectsArray;
+	if (!JsonObject->TryGetArrayField("objects", ObjectsArray)){
+		UE_LOG(LogTemp, Warning, TEXT("JSON does not contain 'objects' array!"));
+		return;
+	}
+
+	// find all actors with tag "Simulate"
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsWithTag(WorldContextObject, ActorTag, FoundActors);
+
+	// Loop through JSON objects and apply to actors
+	for (TSharedPtr<FJsonValue> ObjVal : *ObjectsArray)
+	{
+		TSharedPtr<FJsonObject> ObjMap = ObjVal->AsObject();
+		if (!ObjMap.IsValid()) continue;
+
+		FString ActorName = ObjMap->GetStringField(TEXT("name"));
+		// Find the matching actor in Unreal
+		for (AActor* Actor : FoundActors)
+		{
+			if (Actor->GetName() == ActorName)
+			{
+				// Apply Location and Rotation
+				const TArray<TSharedPtr<FJsonValue>>* PosArray;
+				const TArray<TSharedPtr<FJsonValue>>* QuatArray;
+				
+				if (ObjMap->TryGetArrayField(TEXT("pos"), PosArray) && PosArray->Num() == 3 && ObjMap->TryGetArrayField(TEXT("quat"), QuatArray) && QuatArray->Num() == 4)
+				{
+					FVector NewPos((*PosArray)[0]->AsNumber(), (*PosArray)[1]->AsNumber(), (*PosArray)[2]->AsNumber());
+					// Remember: [X, Y, Z, W] in the Python script to match Unreal
+					FQuat NewQuat((*QuatArray)[0]->AsNumber(), (*QuatArray)[1]->AsNumber(), (*QuatArray)[2]->AsNumber(), (*QuatArray)[3]->AsNumber());
+					NewQuat.Normalize();
+					Actor->SetActorLocationAndRotation(NewPos, NewQuat, false, nullptr, ETeleportType::TeleportPhysics);
+				}
+                
+				break; 
+			}
+		}
+	}
+	
 }

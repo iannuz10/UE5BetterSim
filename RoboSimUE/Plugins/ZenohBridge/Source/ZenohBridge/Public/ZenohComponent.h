@@ -32,10 +32,6 @@ public:
 	// String Event (For Debugging)
 	UPROPERTY(BlueprintAssignable, Category = "Zenoh")
 	FOnZenohMessage OnMessageReceived;
-
-	// Position Event (For movements)
-	UPROPERTY(BlueprintAssignable, Category = "Zenoh")
-	FOnZenohPosition OnPositionReceived;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zenoh Configuration")
 	FString SubscriptionTopic = "sim/command";
