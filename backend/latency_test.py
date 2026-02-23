@@ -11,8 +11,14 @@ NUM_SAMPLES = 1000
 def main():
     # 1. SETUP
     conf = zenoh.Config()
+    
+    # FIX: Force Client Mode (No peer-to-peer mesh routing)
+    conf.insert_json5("mode", "'client'") 
+    
+    # Connect to Windows
     conf.insert_json5("connect/endpoints", "['tcp/host.docker.internal:7447']")
-    print(f"[Benchmark] Connecting to Unreal...")
+    
+    print(f"[Benchmark] Connecting to Unreal (Client Mode)...")
     session = zenoh.open(conf)
 
     # 2. PREPARE PUB/SUB
