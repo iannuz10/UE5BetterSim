@@ -22,7 +22,7 @@ def main():
     print("[Windows] Opening Zenoh session (Mode: Client)...")
     session = zenoh.open(conf)
     
-    key = "sim/command"
+    key = "sim/world/init"
     print(f"[Windows] Subscribing to {key}...")
     sub = session.declare_subscriber(key, listener)
     

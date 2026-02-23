@@ -1,0 +1,5 @@
+# Ignore MuJoCo generated debug files
+debug_world.xml
+
+# Ignore Python cache files
+__pycache__/

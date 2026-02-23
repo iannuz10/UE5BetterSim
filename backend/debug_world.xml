@@ -1,0 +1,24 @@
+<mujoco model="RoboSimUE_World">
+  <compiler angle="radian"/>
+  <option gravity="0 0 -9.81"/>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" width="512" height="512"/>
+    <material name="grid_mat" texture="grid" texrepeat="1 1" texuniform="true" reflectance="0.2"/>
+  </asset>
+  <worldbody>
+    <light diffuse=".5 .5 .5" pos="0 0 10" dir="0 0 -1"/>
+    <!-- BP_ZenohTestCube_C_UAID_047C163BA5E739C002_1862930279 -->
+    <body name="BP_ZenohTestCube_C_UAID_047C163BA5E739C002_1862930279" pos="-5.4 6.8 1.5" quat="1 0 0 0">
+      <freejoint name="BP_ZenohTestCube_C_UAID_047C163BA5E739C002_1862930279_joint"/>
+      <geom type="box" size="0.5 0.5 0.5" rgba="0.8 0.2 0.2 1" mass="1.0"/>
+    </body>
+    <!-- StaticMeshActor_UAID_047C163BA5E7DEC102_2088701375 -->
+    <body name="StaticMeshActor_UAID_047C163BA5E7DEC102_2088701375" pos="-4.9 7.2 2.9" quat="1 0 0 0">
+      <freejoint name="StaticMeshActor_UAID_047C163BA5E7DEC102_2088701375_joint"/>
+      <geom type="sphere" size="0.5" rgba="0.2 0.2 0.8 1" mass="1.0"/>
+    </body>
+    <!-- Floor -->
+    <geom name="Floor_UAID_F4A475FF15A3736A02_1961940706" type="plane" pos="0 0 0" quat="1 0 0 0" size="50 50 0.1" material="grid_mat"/>
+  </worldbody>
+</mujoco>
