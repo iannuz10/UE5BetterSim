@@ -27,3 +27,6 @@ RoboSimUE/Plugins/*/Intermediate/
 *.opendb
 *.sdf
 *.suo
+
+# Ignore MuJoCo generated debug files
+debug_world.xml
