@@ -111,10 +111,16 @@ void UZenohComponent::Subscribe(FString NewTopic)
 {
     if (Backend)
     {
-        // Instead of broadcasting directly, call HandleZenohMessage
-        Backend->Subscribe(NewTopic, [this](const FString& Msg)
+        // A weak pointer safely becomes null if the component is destroyed.
+        TWeakObjectPtr<UZenohComponent> WeakThis(this);
+
+        Backend->Subscribe(NewTopic, [WeakThis](const FString& Msg)
         {
-            this->HandleZenohMessage(Msg);
+            // Before handling the message, check if the component is still alive!
+            if (UZenohComponent* StrongThis = WeakThis.Get())
+            {
+                StrongThis->HandleZenohMessage(Msg);
+            }
         });
     }
 }
