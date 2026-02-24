@@ -1,6 +1,7 @@
 #include "ZenohBackend.h"
 #include "Containers/StringConv.h"
 #include "Async/Async.h"
+#include "String"
 
 // --- SAFE MACRO MANAGEMENT ---
 
@@ -119,6 +120,42 @@ bool FZenohBackend::Initialize()
     return true;
 }
 
+bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
+{
+    State = new FZenohState();
+    
+    // Convert Unreal Strings to standard C strings
+    std::string StdMode = std::string(TCHAR_TO_UTF8(*Mode));
+    std::string StdEndpoint = std::string(TCHAR_TO_UTF8(*Endpoint));
+
+    // 1. Initialize configuration
+    struct z_owned_config_t config;
+    z_config_default(&config);
+
+    // 2. Set Mode (client or peer)
+    zc_config_insert_json5(z_config_loan_mut(&config), "mode", StdMode.c_str());
+
+    // 3. Set Endpoint dynamically!
+    // Note: If we are a Peer, we 'listen'. If we are a Client, we 'connect'.
+    // Since UE5 is usually the server/host, we will use listen/endpoints for now, 
+    // but you can expand this logic later.
+    FString ConfigKey = (Mode == TEXT("client")) ? TEXT("connect/endpoints") : TEXT("listen/endpoints");
+    std::string StdConfigKey = std::string(TCHAR_TO_UTF8(*ConfigKey));
+
+    // Format the JSON5 array string for the endpoint: "['tcp/127.0.0.1:7447']"
+    std::string JsonEndpoint = "['" + StdEndpoint + "']";
+
+    zc_config_insert_json5(z_config_loan_mut(&config), StdConfigKey.c_str(), JsonEndpoint.c_str());
+
+    // 4. Open the session
+    if (z_open(&State->Session, z_move(config), nullptr) < 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 void FZenohBackend::Shutdown()
 {
     if (State && State->bInitialized)
@@ -129,7 +166,7 @@ void FZenohBackend::Shutdown()
         State->bInitialized = false;
     }
 }
-
+/*
 bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
 {
     if (!State || !State->bInitialized) return false;
@@ -150,8 +187,40 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
         return false;
     }
     return true;
+} */
+
+bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
+{
+    if (!State) return false;
+
+    std::string StdTopic(TCHAR_TO_UTF8(*Topic));
+    std::string StdMsg(TCHAR_TO_UTF8(*Message));
+
+    // FIX 1: Bypass the MSVC macro bug by formally declaring an owned key expression
+    struct z_view_keyexpr_t key;
+    if (z_view_keyexpr_from_str(&key, StdTopic.c_str()) < 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Invalid Topic Name (No spaces allowed): '%s'"), *Topic);
+        return false;
+    }
+
+    // Initialize options by passing the pointer 
+    z_put_options_t options;
+    z_put_options_default(&options);
+
+    FTCHARToUTF8 MsgUTF(*Message);
+    struct z_owned_bytes_t payload;
+    z_bytes_copy_from_str(&payload, MsgUTF.Get());
+    
+    if (z_put(z_session_loan(&State->Session), z_view_keyexpr_loan(&key), z_move(payload), &options) <0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Failed to put data on network."));
+        return false;
+    }
+    return true;
 }
 
+/*
 void FZenohBackend::Subscribe(const FString& Topic, FOnMessageCallback Callback)
 {
     if (!State || !State->bInitialized) return;
@@ -171,4 +240,51 @@ void FZenohBackend::Subscribe(const FString& Topic, FOnMessageCallback Callback)
     z_closure_sample(&closure, zenoh_pimpl_callback, NULL, HeapCallback);
 
     z_declare_subscriber(z_session_loan(&State->Session), &State->Subscriber, z_view_keyexpr_loan(&key), (struct z_moved_closure_sample_t*)&closure, &sub_opts);
+}
+*/
+
+void zenoh_pimpl_drop(void* context)
+{
+    auto* CallbackPtr = static_cast<FZenohBackend::FOnMessageCallback*>(context);
+    if (CallbackPtr)
+    {
+        delete CallbackPtr;
+    }
+}
+
+void FZenohBackend::Subscribe(const FString& Topic, FOnMessageCallback Callback)
+{
+    if (!State) return;
+
+    // Save the callback in the backend instance so it stays alive in memory
+    auto* HeapCallback = new FOnMessageCallback(Callback);
+
+    z_subscriber_options_t options;
+    z_subscriber_options_default(&options);
+
+    z_view_keyexpr_t key;
+    FTCHARToUTF8 TopicUTF(*Topic);
+    if (z_view_keyexpr_from_str(&key, TopicUTF.Get()) < 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Invalid Subscribe Topic: '%s'"), *Topic);
+        delete HeapCallback; // Clean up on failure
+        return;
+    }
+
+    // FIX 1: The closure initialization was accidentally commented out! Moved it to a new line.
+    // We also pass zenoh_pimpl_drop so Zenoh knows how to clean up the HeapCallback.
+    z_owned_closure_sample_t closure; 
+    z_closure_sample(&closure, zenoh_pimpl_callback, zenoh_pimpl_drop, HeapCallback);
+
+    // FIX 2: Use the typed loan functions you correctly found for MSVC
+    if (z_declare_subscriber(z_session_loan(&State->Session), &State->Subscriber, z_view_keyexpr_loan(&key), z_move(closure), &options) < 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Failed to subscribe to network."));
+        // Note: If declaration fails, Zenoh doesn't take ownership of the closure, so we must clean up the heap allocation manually
+        delete HeapCallback;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log, TEXT("[Zenoh] Successfully subscribed to: %s"), *Topic);
+    }
 }

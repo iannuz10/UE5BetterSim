@@ -35,14 +35,9 @@ void UZenohComponent::BeginPlay()
         Backend = new FZenohBackend();
     }
 
-    // Initialize and Subscribe
-    if (Backend && Backend->Initialize())
+    if (bAutoConnectOnBeginPlay)
     {
-        UE_LOG(LogTemp, Log, TEXT("Zenoh Backend Initialized successfully!"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Zenoh Backend Failed to Initialize!"));
+        Connect();
     }
 }
 
@@ -50,12 +45,48 @@ void UZenohComponent::BeginPlay()
 void UZenohComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     // Clean shutdown of Zenoh resources
+    Disconnect();
+    if (Backend)
+    {
+        delete Backend;
+        Backend = nullptr;
+    }
+    Super::EndPlay(EndPlayReason);
+}
+
+bool UZenohComponent::Connect()
+{
+    if (!Backend) return false;
+
+    // 1. Format the Protocol String (tcp or udp)
+    FString ProtocolStr = (Protocol == EZenohProtocol::TCP) ? TEXT("tcp") : TEXT("udp");
+
+    // 2. Format the Endpoint String (e.g., "tcp/host.docker.internal:7447")
+    FString Endpoint = FString::Printf(TEXT("%s/%s:%d"), *ProtocolStr, *IPAddress, Port);
+
+    // 3. Format the Mode String
+    FString ModeStr = (ConnectionMode == EZenohMode::Client) ? TEXT("client") : TEXT("peer");
+
+    UE_LOG(LogTemp, Log, TEXT("[Zenoh] Connecting as %s to %s..."), *ModeStr, *Endpoint);
+
+    // 4. Pass the dynamic settings to the backend!
+    bool bSuccess = Backend->Initialize(ModeStr, Endpoint);
+
+    if (bSuccess && !DefaultTopic.IsEmpty())
+    {
+        Subscribe(DefaultTopic);
+    }
+
+    return bSuccess;
+}
+
+void UZenohComponent::Disconnect()
+{
     if (Backend)
     {
         Backend->Shutdown();
+        UE_LOG(LogTemp, Log, TEXT("[Zenoh] Disconnected."));
     }
-
-    Super::EndPlay(EndPlayReason);
 }
 
 // --- TICK ---
