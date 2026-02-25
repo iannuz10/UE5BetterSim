@@ -59,19 +59,27 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
 {
     if (!sample || !context) return;
 
-    // 1. Convert payload to a Zenoh string object
+    // Extract the Topic safely using length (to prevent garbage overruns)
+    z_view_string_t key_string;
+    z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
+    const char* topic_data = z_string_data(z_loan(key_string));
+    size_t topic_len = z_string_len(z_loan(key_string));
+    FUTF8ToTCHAR TopicConverter(topic_data, (int32)topic_len);
+    FString Topic(TopicConverter.Length(), TopicConverter.Get());
+
+    // Convert payload to a Zenoh string object
     z_owned_string_t payload_string;
     z_bytes_to_string(z_sample_payload(sample), &payload_string);
 
-    // 2. Get the exact data pointer and length safely
+    // Get the exact data pointer and length safely
     const char* data = z_string_data(z_loan(payload_string));
     size_t len = z_string_len(z_loan(payload_string));
 
-    // 3. Convert to Unreal String safely using exact length (Ignores garbage memory)
+    // Convert to Unreal String safely using exact length (Ignores garbage memory)
     FUTF8ToTCHAR StringConverter(data, (int32)len);
     FString Msg(StringConverter.Length(), StringConverter.Get());
 
-    // CRITICAL: Clean up memory before proceeding
+    // Clean up memory before proceeding
     z_drop(z_move(payload_string));
 
     // Cast the context back to our C++ callback
@@ -84,10 +92,10 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
         // the pointer is still alive on this Zenoh background thread.
         FZenohBackend::FOnMessageCallback SafeCallback = *CallbackPtr;
 
-        // Jump to the GameThread passing the COPY, not the pointer!
-        AsyncTask(ENamedThreads::GameThread, [SafeCallback, Msg]()
+        // Jump to the GameThread passing the COPY, not the pointer
+        AsyncTask(ENamedThreads::GameThread, [SafeCallback, Topic, Msg]()
         {
-            SafeCallback(Msg);
+            SafeCallback(Topic, Msg);
         });
     }
 }
@@ -103,33 +111,6 @@ FZenohBackend::~FZenohBackend()
     delete State;
 }
 
-bool FZenohBackend::Initialize()
-{
-    // 1. Create Config
-    struct z_owned_config_t config;
-    z_config_default(&config);
-
-    // --- FIX: FORCE CONNECTION TO DOCKER ---
-    // Tell Zenoh to connect to localhost:7447 (where Docker is listening) (TESTING ONLY)
-    // Borrow the config mutably to modify it
-    if (zc_config_insert_json5(z_config_loan_mut(&config), "listen/endpoints", "['tcp/0.0.0.0:7447']") < 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Failed to set listen endpoint config!"));
-    }
-    // ---------------------------------------
-
-    struct z_open_options_t options;
-    z_open_options_default(&options);
-
-    // 2. Open Session
-    if (z_open(&State->Session, (struct z_moved_config_t*)&config, &options) < 0)
-    {
-        return false;
-    }
-    State->bInitialized = true;
-    return true;
-}
-
 bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
 {
     State = new FZenohState();
@@ -138,14 +119,14 @@ bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
     std::string StdMode = std::string(TCHAR_TO_UTF8(*Mode));
     std::string StdEndpoint = std::string(TCHAR_TO_UTF8(*Endpoint));
 
-    // 1. Initialize configuration (Pass by reference for Zenoh 1.7.2)
+    // Initialize configuration 
     struct z_owned_config_t config;
     z_config_default(&config);
 
-    // 2. Set Mode (client or peer) using the generic z_loan_mut macro
+    // Set Mode (client or peer) using the generic z_loan_mut macro
     zc_config_insert_json5(z_loan_mut(config), "mode", StdMode.c_str());
 
-    // 3. Set Endpoint dynamically!
+    // Set Endpoint dynamically
     FString ConfigKey = (Mode == TEXT("client")) ? TEXT("connect/endpoints") : TEXT("listen/endpoints");
     std::string StdConfigKey = std::string(TCHAR_TO_UTF8(*ConfigKey));
 
@@ -154,7 +135,7 @@ bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
 
     zc_config_insert_json5(z_loan_mut(config), StdConfigKey.c_str(), JsonEndpoint.c_str());
 
-    // 4. Open the session
+    // Open the session
     if (z_open(&State->Session, z_move(config), nullptr) < 0)
     {
         UE_LOG(LogTemp, Error, TEXT("[Zenoh] Failed to open Zenoh Session."));
@@ -174,28 +155,6 @@ void FZenohBackend::Shutdown()
         State->bInitialized = false;
     }
 }
-/*
-bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
-{
-    if (!State || !State->bInitialized) return false;
-
-    struct z_put_options_t options;
-    z_put_options_default(&options);
-    
-    FTCHARToUTF8 TopicUTF(*Topic);
-    struct z_view_keyexpr_t key;
-    z_view_keyexpr_from_str(&key, TopicUTF.Get());
-
-    FTCHARToUTF8 MsgUTF(*Message);
-    struct z_owned_bytes_t payload;
-    z_bytes_copy_from_str(&payload, MsgUTF.Get());
-
-    if (z_put(z_session_loan(&State->Session), z_view_keyexpr_loan(&key), (struct z_moved_bytes_t*)&payload, &options) < 0)
-    {
-        return false;
-    }
-    return true;
-} */
 
 bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
 {
@@ -205,7 +164,7 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
     FTCHARToUTF8 StdTopic(*Topic);
     FTCHARToUTF8 StdMsg(*Message);
 
-    // 1. Create a "View" of the Key Expression (Read-only, no allocation/drop needed!)
+    // Create a "View" of the Key Expression (Read-only, no allocation/drop needed)
     z_view_keyexpr_t key_expr;
     if (z_view_keyexpr_from_str(&key_expr, StdTopic.Get()) < 0)
     {
@@ -213,11 +172,11 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
         return false;
     }
 
-    // 2. Create an "Owned" Payload (This strictly fixes the Access Violation Crash!)
+    // Create an "Owned" Payload (This strictly fixes the Access Violation Crash by ensuring Zenoh manages the memory)
     z_owned_bytes_t payload;
     z_bytes_copy_from_str(&payload, StdMsg.Get());
 
-    // 3. Put data to the network (Passing NULL for options uses the defaults)
+    // Put data to the network (Passing NULL for options uses the defaults)
     if (z_put(z_loan(State->Session), z_loan(key_expr), z_move(payload), NULL) < 0)
     {
         UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Failed to put data on network."));
@@ -226,29 +185,6 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
 
     return true;
 }
-
-/*
-void FZenohBackend::Subscribe(const FString& Topic, FOnMessageCallback Callback)
-{
-    if (!State || !State->bInitialized) return;
-
-    // Store callback on heap so Zenoh can hold onto it
-    auto* HeapCallback = new FOnMessageCallback(Callback);
-
-    struct z_subscriber_options_t sub_opts;
-    z_subscriber_options_default(&sub_opts);
-
-    struct z_view_keyexpr_t key;
-    FTCHARToUTF8 TopicUTF(*Topic);
-    z_view_keyexpr_from_str(&key, TopicUTF.Get());
-
-    struct z_owned_closure_sample_t closure;
-
-    z_closure_sample(&closure, zenoh_pimpl_callback, NULL, HeapCallback);
-
-    z_declare_subscriber(z_session_loan(&State->Session), &State->Subscriber, z_view_keyexpr_loan(&key), (struct z_moved_closure_sample_t*)&closure, &sub_opts);
-}
-*/
 
 void zenoh_pimpl_drop(void* context)
 {
@@ -285,7 +221,7 @@ void FZenohBackend::Subscribe(const FString& Topic, FOnMessageCallback Callback)
         UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Failed to subscribe to network."));
         
         // If declaration fails, Zenoh doesn't take ownership of the closure.
-        // Calling z_drop automatically triggers zenoh_pimpl_drop, safely deleting our HeapCallback!
+        // Calling z_drop automatically triggers zenoh_pimpl_drop, safely deleting HeapCallback
         z_drop(z_move(callback)); 
     }
     else

@@ -69,12 +69,16 @@ bool UZenohComponent::Connect()
 
     UE_LOG(LogTemp, Log, TEXT("[Zenoh] Connecting as %s to %s..."), *ModeStr, *Endpoint);
 
-    // 4. Pass the dynamic settings to the backend!
+    // 4. Pass the dynamic settings to the backend
     bool bSuccess = Backend->Initialize(ModeStr, Endpoint);
 
-    if (bSuccess && !DefaultTopic.IsEmpty())
+    if (bSuccess)
     {
-        Subscribe(DefaultTopic);
+        bIsConnected = true; // Track successful connection
+        if (!DefaultTopic.IsEmpty())
+        {
+            Subscribe(DefaultTopic);
+        }
     }
 
     return bSuccess;
@@ -85,6 +89,7 @@ void UZenohComponent::Disconnect()
     if (Backend)
     {
         Backend->Shutdown();
+        bIsConnected = false; // Reset tracking state
         UE_LOG(LogTemp, Log, TEXT("[Zenoh] Disconnected."));
     }
 }
@@ -98,84 +103,46 @@ void UZenohComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 // --- PUBLISH ---
 bool UZenohComponent::Publish(FString Topic, FString Message)
 {
-    if (Backend)
+    if (!Backend || !bIsConnected) 
     {
-        return Backend->Publish(Topic, Message);
+        UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Ignored Publish: Not connected to Zenoh. Call Connect() first!"));
+        return false;
     }
-	
-    UE_LOG(LogTemp, Warning, TEXT("Zenoh: Cannot publish, backend is null."));
-    return false;
+    
+    return Backend->Publish(Topic, Message);
 }
 
-void UZenohComponent::Subscribe(FString NewTopic)
+// --- SUBSCRIBE ---
+bool UZenohComponent::Subscribe(FString NewTopic)
 {
+    if (!Backend || !bIsConnected)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Ignored Subscribe: Not connected to Zenoh. Call Connect() first!"));
+        return;
+    }
+    
     if (Backend)
     {
         // A weak pointer safely becomes null if the component is destroyed.
         TWeakObjectPtr<UZenohComponent> WeakThis(this);
 
-        Backend->Subscribe(NewTopic, [WeakThis](const FString& Msg)
+        Backend->Subscribe(NewTopic, [WeakThis](const FString& Topic, const FString& Msg)
         {
             // Before handling the message, check if the component is still alive!
             if (UZenohComponent* StrongThis = WeakThis.Get())
             {
-                StrongThis->HandleZenohMessage(Msg);
+                StrongThis->HandleZenohMessage(Topic, Msg);
             }
         });
     }
 }
 
-void UZenohComponent::HandleZenohMessage(const FString& Payload)
+void UZenohComponent::HandleZenohMessage(const FString& Topic, const FString& Payload)
 {
     // The component's ONLY job is to take the bytes from the network
     // and hand them to the Blueprint system. Nothing else.
     if (OnMessageReceived.IsBound())
     {
-        OnMessageReceived.Broadcast(Payload);
+        OnMessageReceived.Broadcast(Topic, Payload);
     }
-    /*
-    // UE_LOG(LogTemp, Warning, TEXT("[Zenoh DEBUG] Raw Payload: %s"), *Payload);
-
-    // This allows Blueprints to handle simple commands like "PING"
-    if (OnMessageReceived.IsBound())
-    {
-        OnMessageReceived.Broadcast(Payload);
-    }
-
-    // Try to parse as JSON
-    TSharedPtr<FJsonObject> JsonObject;
-    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Payload);
-
-    if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
-    {
-        // UE_LOG(LogTemp, Warning, TEXT("[Zenoh ERROR] JSON Failed to Deserialize! Is the format correct?"));
-        return;
-    }
-
-    const TSharedPtr<FJsonObject>* LocationObj;
-    if (!JsonObject->TryGetObjectField(TEXT("location"), LocationObj))
-    {
-        UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Could not find field 'location' in JSON."));
-        return;
-    }
-
-    // Look for Coordinates
-    double X = 0, Y = 0, Z = 0;
-    bool bHasX = (*LocationObj)->TryGetNumberField(TEXT("x"), X);
-    bool bHasY = (*LocationObj)->TryGetNumberField(TEXT("y"), Y);
-    bool bHasZ = (*LocationObj)->TryGetNumberField(TEXT("z"), Z);
-
-    if (bHasX && bHasY && bHasZ)
-    {
-        FVector TargetLocation(X, Y, Z);
-        
-        // Success
-        // UE_LOG(LogTemp, Log, TEXT("[Zenoh SUCCESS] X: %f, Y: %f, Z: %f"), X, Y, Z);
-        OnPositionReceived.Broadcast(TargetLocation);
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Missing Coordinate! HasX: %d, HasY: %d, HasZ: %d"), bHasX, bHasY, bHasZ);
-    }
-    */
 }

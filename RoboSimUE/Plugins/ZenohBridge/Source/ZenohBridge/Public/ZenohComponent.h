@@ -24,8 +24,7 @@ enum class EZenohMode : uint8
 // Forward Declaration
 class FZenohBackend;
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnZenohPosition, FVector, NewLocation);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnZenohMessage, FString, Message);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnZenohMessageReceived, const FString&, Topic, const FString&, Message);
 
 UCLASS( ClassGroup=(Networking), meta=(BlueprintSpawnableComponent) )
 class ZENOHBRIDGE_API UZenohComponent : public UActorComponent
@@ -62,9 +61,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Zenoh|Configuration")
 	FString SubscriptionTopic = TEXT("sim/command");
 
-	// String Event
+	UPROPERTY(BlueprintReadOnly, Category = "Zenoh|Connection")
+	bool bIsConnected = false;
+
+	// Events
 	UPROPERTY(BlueprintAssignable, Category = "Zenoh")
-	FOnZenohMessage OnMessageReceived;
+	FOnZenohMessageReceived OnMessageReceived;
 
 protected:
 	virtual void BeginPlay() override;
@@ -92,5 +94,5 @@ private:
 	FZenohBackend* Backend = nullptr;
 	
 	// 4. Helper function to parse JSON
-	void HandleZenohMessage(const FString& Payload);
+	void HandleZenohMessage(const FString& Topic, const FString& Payload);
 };
