@@ -69,9 +69,9 @@ public:
     // LIFECYCLE CONTROL
     // ==========================================
     
-    // Pass a unique 'ConnectionName' to identify this specific network link
+    // Pass a ConnectionInfo struct
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Connection")
-    bool Connect(FName ConnectionName, EZenohMode ConnectionMode, EZenohProtocol Protocol, FString IPAddress, int32 Port);
+    bool Connect(const FZenohConnectionInfo& ConnectionInfo);
 
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Connection")
     void Disconnect(FName ConnectionName);
@@ -93,7 +93,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Messaging")
     bool Publish(FName ConnectionName, FString Topic, FString Message);
 
-    // Global Delegate - Any blueprint can bind to this!
+    // Global Delegate - Any blueprint can bind to this
     UPROPERTY(BlueprintAssignable, Category = "Zenoh|Messaging")
     FOnZenohMessageReceived OnMessageReceived;
 
@@ -103,4 +103,7 @@ private:
     // Multi-connection dictionary
     // Maps a friendly name (ex. "Docker") to its specific C++ backend instance.
     TMap<FName, FZenohBackend*> ActiveConnections;
+
+    // A Mutex Lock to prevent Background Threads and GameThreads from colliding!
+    mutable FCriticalSection ConnectionMapLock; 
 };

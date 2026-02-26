@@ -22,7 +22,10 @@ void UZenohSubsystem::Deinitialize()
 // ==========================================
 void UZenohSubsystem::Tick(float DeltaTime)
 {
-    // 1. Loop through every active connection in our dictionary
+    // Lock the map. If the background thread is currently adding a connection, 
+    // the GameThread will politely wait for a microsecond here.
+    FScopeLock Lock(&ConnectionMapLock);
+
     for (auto& Pair : ActiveConnections)
     {
         FName ConnName = Pair.Key;
@@ -31,11 +34,8 @@ void UZenohSubsystem::Tick(float DeltaTime)
         if (Backend)
         {
             FZenohMessage IncomingMessage;
-            
-            // 2. Drain the lock-free queue for this specific connection
             while (Backend->MessageQueue.Dequeue(IncomingMessage))
             {
-                // 3. Hand the data over to the Blueprint system, tagging it with the Connection Name!
                 HandleZenohMessage(ConnName, IncomingMessage.Topic, IncomingMessage.Payload);
             }
         }
@@ -50,27 +50,28 @@ TStatId UZenohSubsystem::GetStatId() const
 // ==========================================
 // LIFECYCLE CONTROL
 // ==========================================
-bool UZenohSubsystem::Connect(FName ConnectionName, EZenohMode ConnectionMode, EZenohProtocol Protocol, FString IPAddress, int32 Port)
+bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
 {
-    // If the user tries to connect with a name that already exists, clean up the old one first
-    if (ActiveConnections.Contains(ConnectionName))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[ZenohSubsystem] Connection '%s' already exists! Disconnecting old session..."), *ConnectionName.ToString());
-        Disconnect(ConnectionName);
-    }
+    // 1. Clean up old connections safely (Disconnect already has its own lock inside it!)
+    Disconnect(ConnectionInfo.ConnectionName);
 
+    // 2. Prepare the connection strings
+    FString ProtocolStr = (ConnectionInfo.Protocol == EZenohProtocol::TCP) ? TEXT("tcp") : TEXT("udp");
+    FString Endpoint = FString::Printf(TEXT("%s/%s:%d"), *ProtocolStr, *ConnectionInfo.IPAddress, ConnectionInfo.Port);
+    FString ModeStr = (ConnectionInfo.ConnectionMode == EZenohMode::Client) ? TEXT("client") : TEXT("peer");
+
+    UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] [%s] Connecting as %s to %s..."), *ConnectionInfo.ConnectionName.ToString(), *ModeStr, *Endpoint);
+
+    // 3. DO THE HEAVY LIFTING WITHOUT A LOCK!
+    // The background thread does the DNS and TCP handshake freely here.
+    // Because no lock is held, the GameThread's Tick() sails right past without freezing!
     FZenohBackend* NewBackend = new FZenohBackend();
-
-    FString ProtocolStr = (Protocol == EZenohProtocol::TCP) ? TEXT("tcp") : TEXT("udp");
-    FString Endpoint = FString::Printf(TEXT("%s/%s:%d"), *ProtocolStr, *IPAddress, Port);
-    FString ModeStr = (ConnectionMode == EZenohMode::Client) ? TEXT("client") : TEXT("peer");
-
-    UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] [%s] Connecting as %s to %s..."), *ConnectionName.ToString(), *ModeStr, *Endpoint);
-
+    
     if (NewBackend->Initialize(ModeStr, Endpoint))
     {
-        // Save the successful connection in our dictionary
-        ActiveConnections.Add(ConnectionName, NewBackend);
+        // 4. SUCCESS! Now we lock the map for 1 microsecond just to add the connection.
+        FScopeLock Lock(&ConnectionMapLock);
+        ActiveConnections.Add(ConnectionInfo.ConnectionName, NewBackend);
         return true;
     }
     else
@@ -82,11 +83,14 @@ bool UZenohSubsystem::Connect(FName ConnectionName, EZenohMode ConnectionMode, E
 
 void UZenohSubsystem::Disconnect(FName ConnectionName)
 {
+    // Lock the map! Protect it while the background thread modifies it.
+    FScopeLock Lock(&ConnectionMapLock);
+
     if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
     {
         if (*BackendPtr)
         {
-            // Delete the backend object, which triggers the C++ destructor and closes the Zenoh session
+            (*BackendPtr)->Shutdown();
             delete *BackendPtr; 
         }
         
@@ -97,10 +101,14 @@ void UZenohSubsystem::Disconnect(FName ConnectionName)
 
 void UZenohSubsystem::DisconnectAll()
 {
+    // Lock the map!
+    FScopeLock Lock(&ConnectionMapLock);
+
     for (auto& Pair : ActiveConnections)
     {
         if (Pair.Value)
         {
+            Pair.Value->Shutdown();
             delete Pair.Value;
         }
     }
