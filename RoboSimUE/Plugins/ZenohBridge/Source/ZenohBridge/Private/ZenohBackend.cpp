@@ -78,13 +78,10 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
     // Clean up memory
     z_drop(z_move(payload_string));
 
-    // NEW: Cast the context directly to our Backend class
+    // Cast the context directly to our Backend class
     auto* Backend = static_cast<FZenohBackend*>(context);
     if (Backend)
     {
-        // NO MORE ASYNCTASK!
-        // We simply create our message struct and shove it into the lock-free queue.
-        // This takes less than a microsecond and is 100% thread-safe.
         Backend->MessageQueue.Enqueue(FZenohMessage(Topic, Msg));
     }
 }
@@ -96,8 +93,15 @@ FZenohBackend::FZenohBackend()
 
 FZenohBackend::~FZenohBackend()
 {
-    Shutdown();
-    delete State;
+    if (State)
+    {
+        // z_close tells Zenoh to sever the connection and stop all background threads.
+        // This guarantees the C-thread will never touch our deleted MessageQueue!
+        z_close(z_session_loan_mut(&State->Session), NULL);
+        
+        delete State;
+        State = nullptr;
+    }
 }
 
 bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
