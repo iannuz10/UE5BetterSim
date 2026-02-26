@@ -2,12 +2,29 @@ import zenoh
 import json
 import time
 import mujoco
+import numpy as np
 
 # Configuration Constants
 ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
 STATE_TOPIC = "sim/world/state"
 DEBUG_XML_PATH = "/app/debug_world.xml" 
+
+# Thresholds: 1 millimeter for position, ~0.5 degrees for rotation
+POS_TOLERANCE = 0.001 
+QUAT_TOLERANCE = 0.01
+
+def has_moved_visually(old_pos, new_pos, old_quat, new_quat):
+    pos_diff = np.linalg.norm(np.array(new_pos) - np.array(old_pos))
+    if pos_diff > POS_TOLERANCE:
+        return True
+        
+    # Quick quaternion distance (1.0 means identical, 0.0 means 180 deg apart)
+    quat_dot = abs(np.dot(old_quat, new_quat))
+    if quat_dot < (1.0 - QUAT_TOLERANCE):
+        return True
+        
+    return False
 
 def generate_mujoco_xml(json_data):
     """Translates the Unreal JSON into MuJoCo MJCF XML format."""
@@ -133,6 +150,14 @@ def main():
     
     # Target 60 FPS update rate to Unreal
     frame_time = 1.0 / 60.0 
+
+    # Dict to track last sent state for each object
+    last_sent_states = {}
+
+    # # Debug and performance analysis
+    # frame_counter = 0
+    # skipped_objects_this_second = 0
+    # total_objects_this_second = 0
     
     try:
         while True:
@@ -147,25 +172,52 @@ def main():
             state_dict = {"objects": []}
             
             for name in dynamic_bodies:
+                # total_objects_this_second += 1 # Track total possible updates
+
                 # Get raw MuJoCo arrays
                 mj_pos = physics_data.body(name).xpos
                 mj_quat = physics_data.body(name).xquat # MuJoCo format: [w, x, y, z]
+
+                # Check if this object has moved significantly since last sent state
+                needs_update = True
+                if name in last_sent_states:
+                    old_pos, old_quat = last_sent_states[name]
+                    if not has_moved_visually(old_pos, mj_pos, old_quat, mj_quat):
+                        needs_update = False
+                        # skipped_objects_this_second += 1 # Track savings
+
+                if needs_update:
+                    # Update last sent state
+                    last_sent_states[name] = (mj_pos.copy(), mj_quat.copy())
                 
-                # Math Conversion: Back to Unreal Format!
-                # Meters -> Centimeters, and Right-Hand -> Left-Hand (Invert Y)
-                ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
-                
-                # Quat Conversion: [w, x, y, z] -> [-x, y, -z, w] (Revert our earlier inversion)
-                ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
-                
-                state_dict["objects"].append({
-                    "name": name,
-                    "pos": ue_pos,
-                    "quat": ue_quat
-                })
+                    # Math Conversion: Back to Unreal Format!
+                    # Meters -> Centimeters, and Right-Hand -> Left-Hand (Invert Y)
+                    ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
+                    
+                    # Quat Conversion: [w, x, y, z] -> [-x, y, -z, w] (Revert our earlier inversion)
+                    ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
+                    
+                    state_dict["objects"].append({
+                        "name": name,
+                        "pos": ue_pos,
+                        "quat": ue_quat
+                    })
                 
             # 3. Publish back to Unreal
-            state_pub.put(json.dumps(state_dict))
+            if len(state_dict["objects"]) > 0:
+                state_pub.put(json.dumps(state_dict))
+
+            # # Print Debug Stats Once Per Second (approx 60 frames)
+            # frame_counter += 1
+            # if frame_counter >= 60:
+            #     if total_objects_this_second > 0:
+            #         percent_saved = (skipped_objects_this_second / total_objects_this_second) * 100
+            #         print(f"[Debug] Delta Updates: Skipped {skipped_objects_this_second}/{total_objects_this_second} object updates ({percent_saved:.1f}% bandwidth saved this second).")
+                
+            #     # Reset counters for the next second
+            #     frame_counter = 0
+            #     skipped_objects_this_second = 0
+            #     total_objects_this_second = 0
             
             # 4. Sleep to match Real-Time
             elapsed = time.perf_counter() - step_start
