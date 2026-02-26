@@ -6,12 +6,8 @@
 // --- CONSTRUCTOR ---
 UZenohComponent::UZenohComponent()
 {
-    // Enable ticking if you need it, otherwise false is fine
+    // FIX: Make sure this is set to TRUE so our TickComponent function actually runs!
     PrimaryComponentTick.bCanEverTick = true;
-
-    // CRITICAL: We initialize to nullptr here.
-    // We do NOT allocate FZenohBackend yet to prevent loading the DLL at editor startup.
-    Backend = nullptr;
 }
 
 // --- DESTRUCTOR ---
@@ -98,6 +94,19 @@ void UZenohComponent::Disconnect()
 void UZenohComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    if (Backend)
+    {
+        FZenohMessage IncomingMessage;
+        
+        // Dequeue removes the oldest message from the queue and puts it into 'IncomingMessage'.
+        // The 'while' loop ensures that if 5 messages arrived this frame, we process all 5!
+        while (Backend->MessageQueue.Dequeue(IncomingMessage))
+        {
+            // Hand the safely extracted strings over to the Blueprint system!
+            HandleZenohMessage(IncomingMessage.Topic, IncomingMessage.Payload);
+        }
+    }
 }
 
 // --- PUBLISH ---
@@ -113,28 +122,15 @@ bool UZenohComponent::Publish(FString Topic, FString Message)
 }
 
 // --- SUBSCRIBE ---
-bool UZenohComponent::Subscribe(FString NewTopic)
+void UZenohComponent::Subscribe(FString NewTopic)
 {
     if (!Backend || !bIsConnected)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Ignored Subscribe: Not connected to Zenoh. Call Connect() first!"));
+        UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Ignored Subscribe: Not connected to Zenoh."));
         return;
     }
     
-    if (Backend)
-    {
-        // A weak pointer safely becomes null if the component is destroyed.
-        TWeakObjectPtr<UZenohComponent> WeakThis(this);
-
-        Backend->Subscribe(NewTopic, [WeakThis](const FString& Topic, const FString& Msg)
-        {
-            // Before handling the message, check if the component is still alive!
-            if (UZenohComponent* StrongThis = WeakThis.Get())
-            {
-                StrongThis->HandleZenohMessage(Topic, Msg);
-            }
-        });
-    }
+    Backend->Subscribe(NewTopic);
 }
 
 void UZenohComponent::HandleZenohMessage(const FString& Topic, const FString& Payload)

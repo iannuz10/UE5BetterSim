@@ -59,7 +59,7 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
 {
     if (!sample || !context) return;
 
-    // Extract the Topic safely using length (to prevent garbage overruns)
+    // Extract the Topic safely
     z_view_string_t key_string;
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
     const char* topic_data = z_string_data(z_loan(key_string));
@@ -67,36 +67,25 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
     FUTF8ToTCHAR TopicConverter(topic_data, (int32)topic_len);
     FString Topic(TopicConverter.Length(), TopicConverter.Get());
 
-    // Convert payload to a Zenoh string object
+    // Extract the Payload safely
     z_owned_string_t payload_string;
     z_bytes_to_string(z_sample_payload(sample), &payload_string);
-
-    // Get the exact data pointer and length safely
     const char* data = z_string_data(z_loan(payload_string));
     size_t len = z_string_len(z_loan(payload_string));
-
-    // Convert to Unreal String safely using exact length (Ignores garbage memory)
     FUTF8ToTCHAR StringConverter(data, (int32)len);
     FString Msg(StringConverter.Length(), StringConverter.Get());
 
-    // Clean up memory before proceeding
+    // Clean up memory
     z_drop(z_move(payload_string));
 
-    // Cast the context back to our C++ callback
-    auto* CallbackPtr = static_cast<FZenohBackend::FOnMessageCallback*>(context);
-    
-    if (CallbackPtr)
+    // NEW: Cast the context directly to our Backend class
+    auto* Backend = static_cast<FZenohBackend*>(context);
+    if (Backend)
     {
-        // FIX: The Race Condition.
-        // Copy the TFunction by value right now, while we are absolutely sure 
-        // the pointer is still alive on this Zenoh background thread.
-        FZenohBackend::FOnMessageCallback SafeCallback = *CallbackPtr;
-
-        // Jump to the GameThread passing the COPY, not the pointer
-        AsyncTask(ENamedThreads::GameThread, [SafeCallback, Topic, Msg]()
-        {
-            SafeCallback(Topic, Msg);
-        });
+        // NO MORE ASYNCTASK!
+        // We simply create our message struct and shove it into the lock-free queue.
+        // This takes less than a microsecond and is 100% thread-safe.
+        Backend->MessageQueue.Enqueue(FZenohMessage(Topic, Msg));
     }
 }
 
@@ -188,40 +177,28 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
 
 void zenoh_pimpl_drop(void* context)
 {
-    auto* CallbackPtr = static_cast<FZenohBackend::FOnMessageCallback*>(context);
-    if (CallbackPtr)
-    {
-        delete CallbackPtr;
-    }
+    // Do nothing. The Backend instance lifecycle is managed by Unreal now.
 }
 
-void FZenohBackend::Subscribe(const FString& Topic, FOnMessageCallback Callback)
+void FZenohBackend::Subscribe(const FString& Topic)
 {
     if (!State) return;
-
-    // Save the callback in the backend instance so it stays alive in memory
-    auto* HeapCallback = new FOnMessageCallback(Callback);
 
     FTCHARToUTF8 TopicUTF(*Topic);
     z_view_keyexpr_t key_expr;
     if (z_view_keyexpr_from_str(&key_expr, TopicUTF.Get()) < 0)
     {
         UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Invalid Subscribe Topic: '%s'"), *Topic);
-        delete HeapCallback; // Clean up on failure
         return;
     }
 
-    // Use the simplified generic z_closure macro exactly as shown in the docs
+    // NEW: Instead of passing a HeapCallback, we just pass 'this' (the pointer to our Backend)
     z_owned_closure_sample_t callback;
-    z_closure(&callback, zenoh_pimpl_callback, zenoh_pimpl_drop, HeapCallback);
+    z_closure(&callback, zenoh_pimpl_callback, zenoh_pimpl_drop, this);
 
-    // Declare subscriber using the generic z_loan macro and NULL for default options
     if (z_declare_subscriber(z_loan(State->Session), &State->Subscriber, z_loan(key_expr), z_move(callback), NULL) < 0)
     {
         UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Failed to subscribe to network."));
-        
-        // If declaration fails, Zenoh doesn't take ownership of the closure.
-        // Calling z_drop automatically triggers zenoh_pimpl_drop, safely deleting HeapCallback
         z_drop(z_move(callback)); 
     }
     else
