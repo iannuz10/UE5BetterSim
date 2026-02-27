@@ -116,6 +116,7 @@ void UZenohSubsystem::DisconnectAll()
 
 bool UZenohSubsystem::IsConnected(FName ConnectionName) const
 {
+    FScopeLock Lock(&ConnectionMapLock);
     return ActiveConnections.Contains(ConnectionName);
 }
 
@@ -124,6 +125,7 @@ bool UZenohSubsystem::IsConnected(FName ConnectionName) const
 // ==========================================
 void UZenohSubsystem::Subscribe(FName ConnectionName, FString Topic)
 {
+    FScopeLock Lock(&ConnectionMapLock);
     if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
     {
         if (*BackendPtr)
@@ -139,6 +141,7 @@ void UZenohSubsystem::Subscribe(FName ConnectionName, FString Topic)
 
 bool UZenohSubsystem::Publish(FName ConnectionName, FString Topic, FString Message)
 {
+    FScopeLock Lock(&ConnectionMapLock);
     if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
     {
         if (*BackendPtr)
