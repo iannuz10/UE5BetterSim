@@ -26,7 +26,7 @@ public:
 
         FString DllPath;
 
-        // 1. Try to find the plugin safely
+        // Try to find the plugin
         TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin("ZenohBridge");
 
         if (Plugin.IsValid())
@@ -42,16 +42,16 @@ public:
             DllPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/ZenohBridge/Source/ThirdParty/bin/zenohc.dll"));
         }
 
-        // 2. Log for debugging
+        // Log for debugging
         UE_LOG(LogTemp, Log, TEXT("[ZenohBridge] Attempting to load DLL from: %s"), *DllPath);
 
-        // 3. Load the DLL
+        // Load the DLL
         if (FPaths::FileExists(DllPath))
         {
             ZenohDllHandle = FPlatformProcess::GetDllHandle(*DllPath);
         }
 
-        // 4. Final Fallback: Check the Project Binaries folder (Build.cs copies it here)
+        // Final Fallback: Check the Project Binaries folder (Build.cs copies it here)
         if (ZenohDllHandle == nullptr)
         {
             FString BinPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Binaries/Win64/zenohc.dll"));

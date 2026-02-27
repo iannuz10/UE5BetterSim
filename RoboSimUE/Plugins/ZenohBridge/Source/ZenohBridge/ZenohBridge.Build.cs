@@ -49,16 +49,16 @@ public class ZenohBridge : ModuleRules
             SourceBinPath = Path.Combine(ThirdPartyPath, "lib", PlatformFolder, BinaryFileName);
         }
 
-        // 4. Link and Copy 
+        // Link and Copy 
         if (!string.IsNullOrEmpty(PlatformFolder))
         {
-            // A. Link the Lib (Compile time)
+            // Link the Lib (Compile time)
             PublicAdditionalLibraries.Add(Path.Combine(ThirdPartyPath, "lib", PlatformFolder, LibFileName));
 
-            // B. Delay Load (Runtime)
+            // Delay Load (Runtime)
             PublicDelayLoadDLLs.Add(BinaryFileName);
 
-            // C. MANUAL COPY
+            // MANUAL COPY
             
             // Destination 1: Project Binaries 
             string ProjectBinaries = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", "..", "..", "..", "Binaries", PlatformFolder));

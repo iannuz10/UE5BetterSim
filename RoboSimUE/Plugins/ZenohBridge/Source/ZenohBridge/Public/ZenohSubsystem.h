@@ -78,8 +78,7 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Connection")
     void DisconnectAll();
-
-    // Replaces the old bIsConnected variable
+    
     UFUNCTION(BlueprintPure, Category = "Zenoh|Connection")
     bool IsConnected(FName ConnectionName) const;
 
@@ -101,9 +100,9 @@ private:
     void HandleZenohMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload);
     
     // Multi-connection dictionary
-    // Maps a friendly name (ex. "Docker") to its specific C++ backend instance.
+    // Maps a name (ex. "Docker") to its specific C++ backend instance.
     TMap<FName, FZenohBackend*> ActiveConnections;
 
-    // A Mutex Lock to prevent Background Threads and GameThreads from colliding!
+    // A Mutex Lock to prevent Background Threads and GameThreads from colliding
     mutable FCriticalSection ConnectionMapLock; 
 };

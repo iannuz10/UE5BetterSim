@@ -23,7 +23,7 @@ void UZenohSubsystem::Deinitialize()
 void UZenohSubsystem::Tick(float DeltaTime)
 {
     // Lock the map. If the background thread is currently adding a connection, 
-    // the GameThread will politely wait for a microsecond here.
+    // the GameThread will wait for a microsecond
     FScopeLock Lock(&ConnectionMapLock);
 
     for (auto& Pair : ActiveConnections)
@@ -52,24 +52,23 @@ TStatId UZenohSubsystem::GetStatId() const
 // ==========================================
 bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
 {
-    // 1. Clean up old connections safely (Disconnect already has its own lock inside it!)
+    // Clean up old connections safely (Disconnect already has its own lock inside it!)
     Disconnect(ConnectionInfo.ConnectionName);
 
-    // 2. Prepare the connection strings
+    // Prepare the connection strings
     FString ProtocolStr = (ConnectionInfo.Protocol == EZenohProtocol::TCP) ? TEXT("tcp") : TEXT("udp");
     FString Endpoint = FString::Printf(TEXT("%s/%s:%d"), *ProtocolStr, *ConnectionInfo.IPAddress, ConnectionInfo.Port);
     FString ModeStr = (ConnectionInfo.ConnectionMode == EZenohMode::Client) ? TEXT("client") : TEXT("peer");
 
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] [%s] Connecting as %s to %s..."), *ConnectionInfo.ConnectionName.ToString(), *ModeStr, *Endpoint);
-
-    // 3. DO THE HEAVY LIFTING WITHOUT A LOCK!
-    // The background thread does the DNS and TCP handshake freely here.
-    // Because no lock is held, the GameThread's Tick() sails right past without freezing!
+    
+    // The background thread does the DNS and TCP handshake freely 
+    // Because no lock is held, the GameThread's Tick() can continue running and processing messages from existing connections without waiting for this potentially slow operation
     FZenohBackend* NewBackend = new FZenohBackend();
     
     if (NewBackend->Initialize(ModeStr, Endpoint))
     {
-        // 4. SUCCESS! Now we lock the map for 1 microsecond just to add the connection.
+        // SUCCESS! Now we lock the map for 1 microsecond just to add the connection.
         FScopeLock Lock(&ConnectionMapLock);
         ActiveConnections.Add(ConnectionInfo.ConnectionName, NewBackend);
         return true;
@@ -83,7 +82,7 @@ bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
 
 void UZenohSubsystem::Disconnect(FName ConnectionName)
 {
-    // Lock the map! Protect it while the background thread modifies it.
+    // Lock the map. Protect it while the background thread modifies it.
     FScopeLock Lock(&ConnectionMapLock);
 
     if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
@@ -101,7 +100,7 @@ void UZenohSubsystem::Disconnect(FName ConnectionName)
 
 void UZenohSubsystem::DisconnectAll()
 {
-    // Lock the map!
+    // Lock the map.
     FScopeLock Lock(&ConnectionMapLock);
 
     for (auto& Pair : ActiveConnections)

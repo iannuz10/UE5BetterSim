@@ -5,27 +5,27 @@
 
 // --- SAFE MACRO MANAGEMENT ---
 
-// 1. Platform-Specific Headers
+// Platform-Specific Headers
 #if PLATFORM_WINDOWS
     #include "Windows/AllowWindowsPlatformTypes.h"
 #endif
 
-// 2. Disable Warnings (Common for both)
+// Disable Warnings (Common for both)
 #pragma warning(push)
 #pragma warning(disable: 4191) 
 #pragma warning(disable: 4005)
 
-// 3. Handle ALIGN conflict
+// Handle ALIGN conflict
 // Unreal defines ALIGN. Zenoh defines ALIGN.
 #ifdef ALIGN
     #define UNREAL_ALIGN ALIGN
     #undef ALIGN
 #endif
 
-// 4. Include Zenoh
+// Include Zenoh
 #include "zenoh.h" 
 
-// 5. Restore ALIGN
+// Restore ALIGN
 #ifdef ALIGN
     #undef ALIGN // remove Zenoh's
 #endif
@@ -37,7 +37,7 @@
 
 #undef ZENOHC_API
 
-// 6. Restore Platform Headers
+// Restore Platform Headers
 #if PLATFORM_WINDOWS
     #pragma warning(pop)
     #include "Windows/HideWindowsPlatformTypes.h"
@@ -59,7 +59,7 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
 {
     if (!sample || !context) return;
 
-    // Extract the Topic safely
+    // Extract the Topic 
     z_view_string_t key_string;
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
     const char* topic_data = z_string_data(z_loan(key_string));
@@ -67,7 +67,7 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
     FUTF8ToTCHAR TopicConverter(topic_data, (int32)topic_len);
     FString Topic(TopicConverter.Length(), TopicConverter.Get());
 
-    // Extract the Payload safely
+    // Extract the Payload 
     z_owned_string_t payload_string;
     z_bytes_to_string(z_sample_payload(sample), &payload_string);
     const char* data = z_string_data(z_loan(payload_string));
@@ -78,7 +78,7 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
     // Clean up memory
     z_drop(z_move(payload_string));
 
-    // Cast the context directly to our Backend class
+    // Cast the context directly to Backend class
     auto* Backend = static_cast<FZenohBackend*>(context);
     if (Backend)
     {
@@ -116,7 +116,7 @@ bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
     struct z_owned_config_t config;
     z_config_default(&config);
 
-    // Set Mode (client or peer) using the generic z_loan_mut macro
+    // Set Mode (client or peer)
     zc_config_insert_json5(z_loan_mut(config), "mode", StdMode.c_str());
 
     // Set Endpoint dynamically
@@ -153,7 +153,7 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
 {
     if (!State) return false;
 
-    // Safely convert Unreal FString to UTF-8
+    // Convert Unreal FString to UTF-8
     FTCHARToUTF8 StdTopic(*Topic);
     FTCHARToUTF8 StdMsg(*Message);
 
@@ -165,7 +165,7 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
         return false;
     }
 
-    // Create an "Owned" Payload (This strictly fixes the Access Violation Crash by ensuring Zenoh manages the memory)
+    // Create Payload
     z_owned_bytes_t payload;
     z_bytes_copy_from_str(&payload, StdMsg.Get());
 
@@ -181,7 +181,7 @@ bool FZenohBackend::Publish(const FString& Topic, const FString& Message)
 
 void zenoh_pimpl_drop(void* context)
 {
-    // Do nothing. The Backend instance lifecycle is managed by Unreal now.
+    // Do nothing. Backend instance lifecycle is managed by Unreal
 }
 
 void FZenohBackend::Subscribe(const FString& Topic)
@@ -195,8 +195,7 @@ void FZenohBackend::Subscribe(const FString& Topic)
         UE_LOG(LogTemp, Error, TEXT("[Zenoh ERROR] Invalid Subscribe Topic: '%s'"), *Topic);
         return;
     }
-
-    // NEW: Instead of passing a HeapCallback, we just pass 'this' (the pointer to our Backend)
+    
     z_owned_closure_sample_t callback;
     z_closure(&callback, zenoh_pimpl_callback, zenoh_pimpl_drop, this);
 

@@ -27,11 +27,11 @@ void UZenohAsyncConnect::Activate()
 	// JUMP TO A BACKGROUND CPU CORE
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, Subsystem, SafeData]()
 	{
-		// This DNS resolution and TCP handshake now happens completely off the GameThread
+		// DNS resolution and TCP handshake happens off the GameThread
 		bool bSuccess = Subsystem->Connect(SafeData);
 
 		// JUMP BACK TO THE GAMETHREAD
-		// You cannot fire Blueprint events from a background thread!
+		// Cannot fire Blueprint events from a background thread
 		AsyncTask(ENamedThreads::GameThread, [this, bSuccess]()
 		{
 			if (bSuccess)

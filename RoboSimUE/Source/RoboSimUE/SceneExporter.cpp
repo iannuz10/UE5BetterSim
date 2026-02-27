@@ -49,19 +49,19 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, FNa
 		UStaticMeshComponent* MeshComp = Actor->FindComponentByClass<UStaticMeshComponent>();
 		if (MeshComp && MeshComp->GetStaticMesh())
 		{
-			// 1. Get the raw, unrotated 3D model's bounding box
+			// Get the raw, unrotated 3D model's bounding box
 			FBox LocalBox = MeshComp->GetStaticMesh()->GetBoundingBox();
             
-			// 2. Get the Extent (which is already the Half-Size in Centimeters)
+			// Get the Extent (which is already the Half-Size in Centimeters)
 			FVector LocalExtent = LocalBox.GetExtent(); 
             
-			// 3. Get the Actor's Scale Multiplier
+			// Get the Actor's Scale Multiplier
 			FVector ActorScale = Actor->GetActorScale3D();
             
-			// 4. Calculate the TRUE physical half-size in cm (Immune to rotation!)
+			// Calculate the TRUE physical half-size in cm (Immune to rotation)
 			FVector TrueExtent = LocalExtent * ActorScale;
             
-			// 5. Convert to MuJoCo format (Centimeters to Meters)
+			// Convert to MuJoCo format (Centimeters to Meters)
 			TArray<TSharedPtr<FJsonValue>> SizeArray;
 			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.X / 100.0))); 
 			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.Y / 100.0))); 
@@ -105,7 +105,7 @@ void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, FNam
 		return;
 	}
 
-	// find all actors with tag "Simulate"
+	// find all actors with received tag
 	TArray<AActor*> FoundActors;
 	UGameplayStatics::GetAllActorsWithTag(WorldContextObject, ActorTag, FoundActors);
 
