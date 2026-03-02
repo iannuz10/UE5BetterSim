@@ -13,6 +13,7 @@ void UZenohSubsystem::Deinitialize()
 {
     // Cleanly shut down all background network threads when the game closes
     DisconnectAll();
+    TopicListeners.Empty();
     Super::Deinitialize();
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] Deinitialized. All connections closed."));
 }
@@ -123,20 +124,40 @@ bool UZenohSubsystem::IsConnected(FName ConnectionName) const
 // ==========================================
 // MESSAGING
 // ==========================================
-void UZenohSubsystem::Subscribe(FName ConnectionName, FString Topic)
+
+UZenohTopicListener* UZenohSubsystem::SubscribeToTopic(FName ConnectionName, FString Topic)
 {
-    FScopeLock Lock(&ConnectionMapLock);
-    if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
+    // Tell the background thread to listen to the network
     {
-        if (*BackendPtr)
+        FScopeLock Lock(&ConnectionMapLock);
+        if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
         {
-            (*BackendPtr)->Subscribe(Topic);
+            if (*BackendPtr)
+            {
+                (*BackendPtr)->Subscribe(Topic);
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Failed to Subscribe: Connection '%s' not found!"), *ConnectionName.ToString());
+            return nullptr; // Return nothing so the Blueprint knows it failed
         }
     }
-    else
+
+    // Generate a unique key for this specific route (e.g., "Docker::sim/state")
+    FString RoutingKey = ConnectionName.ToString() + TEXT("::") + Topic;
+
+    // If a listener object already exists for this topic, just hand it back!
+    if (TopicListeners.Contains(RoutingKey))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[ZenohSubsystem] Ignored Subscribe: Connection '%s' not found!"), *ConnectionName.ToString());
+        return TopicListeners[RoutingKey];
     }
+
+    // Otherwise, create a new Proxy Object, save it in the dictionary, and return it.
+    UZenohTopicListener* NewListener = NewObject<UZenohTopicListener>(this);
+    TopicListeners.Add(RoutingKey, NewListener);
+    
+    return NewListener;
 }
 
 bool UZenohSubsystem::Publish(FName ConnectionName, FString Topic, FString Message)
@@ -156,8 +177,22 @@ bool UZenohSubsystem::Publish(FName ConnectionName, FString Topic, FString Messa
 
 void UZenohSubsystem::HandleZenohMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload)
 {
-    if (OnMessageReceived.IsBound())
+    // GLOBAL FIREHOSE: Broadcast to anyone listening to everything (e.g., Debug UI)
+    if (OnGlobalMessageReceived.IsBound())
     {
-        OnMessageReceived.Broadcast(ConnectionName, Topic, Payload);
+        OnGlobalMessageReceived.Broadcast(ConnectionName, Topic, Payload);
+    }
+
+    // SPECIFIC ROUTING: Reconstruct the Routing Key
+    FString RoutingKey = ConnectionName.ToString() + TEXT("::") + Topic;
+
+    // High-speed O(1) Dictionary Lookup
+    if (UZenohTopicListener** ListenerPtr = TopicListeners.Find(RoutingKey))
+    {
+        if (*ListenerPtr)
+        {
+            // Only wake up the specific Blueprint that asked for this exact topic!
+            (*ListenerPtr)->OnMessageReceived.Broadcast(Payload);
+        }
     }
 }

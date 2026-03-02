@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Tickable.h" 
-#include "ZenohBackend.h" 
+#include "ZenohBackend.h"
 #include "ZenohSubsystem.generated.h"
 
 // Enum configurations
@@ -42,9 +42,19 @@ struct FZenohConnectionInfo
     int32 Port = 7447;
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnZenohTopicMessage, const FString&, Message);
 
-// Delegate passes THREE parameters to you know exactly WHICH connection the message came from
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnZenohMessageReceived, const FName&, ConnectionName, const FString&, Topic, const FString&, Message);
+UCLASS(BlueprintType)
+class ZENOHBRIDGE_API UZenohTopicListener : public UObject
+{
+    GENERATED_BODY()
+public:
+    // It only outputs the message, because the Topic and Connection are already known
+    UPROPERTY(BlueprintAssignable, Category = "Zenoh|Messaging")
+    FOnZenohTopicMessage OnMessageReceived;
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnZenohGlobalMessage, const FName&, ConnectionName, const FString&, Topic, const FString&, Message);
 
 UCLASS()
 class ZENOHBRIDGE_API UZenohSubsystem : public UGameInstanceSubsystem, public FTickableGameObject
@@ -87,14 +97,13 @@ public:
     // ==========================================
     
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Messaging")
-    void Subscribe(FName ConnectionName, FString Topic);
+    UZenohTopicListener* SubscribeToTopic(FName ConnectionName, FString Topic);
 
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Messaging")
     bool Publish(FName ConnectionName, FString Topic, FString Message);
 
-    // Global Delegate - Any blueprint can bind to this
     UPROPERTY(BlueprintAssignable, Category = "Zenoh|Messaging")
-    FOnZenohMessageReceived OnMessageReceived;
+    FOnZenohGlobalMessage OnGlobalMessageReceived;
 
 private:
     void HandleZenohMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload);
@@ -104,5 +113,10 @@ private:
     TMap<FName, FZenohBackend*> ActiveConnections;
 
     // A Mutex Lock to prevent Background Threads and GameThreads from colliding
-    mutable FCriticalSection ConnectionMapLock; 
+    mutable FCriticalSection ConnectionMapLock;
+
+    // Dictionary of Delegates for specific topics. This allows Blueprints to bind custom events to specific topics, instead of using the global OnMessageReceived delegate and filtering by topic manually.
+    UPROPERTY()
+    TMap<FString, UZenohTopicListener*> TopicListeners;
+    
 };
