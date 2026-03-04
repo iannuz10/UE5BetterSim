@@ -1,0 +1,120 @@
+<mujoco model="quadruped">
+  <compiler angle="radian" />
+
+  <worldbody>
+    <body name="BP_Quadruped_C_UAID_047C163BA5E7B8C402_1316620930__root" pos="-3.9 7.9 1.9000000000000001" quat="6.083978620542759e-09 6.123233958483139e-17 -0.9999999999999997 -6.12323395848314e-17"><freejoint name="BP_Quadruped_C_UAID_047C163BA5E7B8C402_1316620930_freejoint" /><geom size="0.113 0.08 0.035" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+    <geom size="0.113 0.08 0.035" type="box" rgba="0 0 0 1" />
+    <body name="motor_front_rightR_link" pos="0.21 -0.125 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 -0.00333333" quat="0.811242 0.58471 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_front_rightR_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_front_rightR_link" pos="0 0.115 -0.0199975" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_front_rightR_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+    <body name="motor_front_rightL_link" pos="0.21 -0.06 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 0.00333333" quat="0.58471 0.811242 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_front_rightL_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_front_rightL_link" pos="0 0.115 0.0200025" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_front_rightL_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+    <body name="motor_front_leftR_link" pos="0.21 0.125 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 0.00333333" quat="0.58471 0.811242 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_front_leftR_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_front_leftR_link" pos="0 0.115 0.0200025" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_front_leftR_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+    <body name="motor_front_leftL_link" pos="0.21 0.06 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 -0.00333333" quat="0.811242 0.58471 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_front_leftL_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_front_leftL_link" pos="0 0.115 -0.0199975" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_front_leftL_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+    <body name="motor_back_rightR_link" pos="-0.21 -0.125 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 -0.00333333" quat="0.811242 0.58471 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_back_rightR_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_back_rightR_link" pos="0 0.115 -0.0199975" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_back_rightR_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+    <body name="motor_back_rightL_link" pos="-0.21 -0.06 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 0.00333333" quat="0.58471 0.811242 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_back_rightL_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_back_rightL_link" pos="0 0.115 0.0200025" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_back_rightL_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+    <body name="motor_back_leftR_link" pos="-0.21 0.125 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 0.00333333" quat="0.58471 0.811242 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_back_leftR_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_back_leftR_link" pos="0 0.115 0.0200025" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_back_leftR_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+    <body name="motor_back_leftL_link" pos="-0.21 0.06 0" quat="0.707123 0.70709 0 0">
+      <inertial pos="0 0.01 -0.00333333" quat="0.811242 0.58471 0 0" mass="0.3" diaginertia="2.00017 2.00017 2" />
+      <joint name="motor_back_leftL_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-100 100" />
+      <geom size="0.0434 0.013" type="cylinder" contype="0" conaffinity="0" group="1" density="0" rgba="0 0 0 1" />
+      <geom size="0.0434 0.013" type="cylinder" rgba="0 0 0 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+      <geom size="0.005 0.005 0.055" pos="0 0.06 -0.02" quat="0.707123 -0.70709 0 0" type="box" rgba="0.65 0.65 0.75 1" />
+      <body name="lower_leg_back_leftL_link" pos="0 0.115 -0.0199975" quat="0.707123 -0.70709 0 0">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="1 1 1" />
+        <joint name="knee_back_leftL_link" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-100 100" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" contype="0" conaffinity="0" group="1" density="0" rgba="0.65 0.65 0.75 1" />
+        <geom size="0.005 0.005 0.1" pos="0 0 0.1" type="box" rgba="0.65 0.65 0.75 1" />
+      </body>
+    </body>
+  </body></worldbody>
+</mujoco>

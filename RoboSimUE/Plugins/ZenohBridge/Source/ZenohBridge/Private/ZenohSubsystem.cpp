@@ -72,6 +72,17 @@ bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
         // SUCCESS! Now we lock the map for 1 microsecond just to add the connection.
         FScopeLock Lock(&ConnectionMapLock);
         ActiveConnections.Add(ConnectionInfo.ConnectionName, NewBackend);
+
+        // The connection is now online. Flush any deferred subscriptions.
+        if (TArray<FString>* PendingTopics = PendingSubscriptions.Find(ConnectionInfo.ConnectionName))
+        {
+            for (const FString& PendingTopic : *PendingTopics)
+            {
+                NewBackend->Subscribe(PendingTopic);
+            }
+            PendingSubscriptions.Remove(ConnectionInfo.ConnectionName);
+        }
+        
         return true;
     }
     else
@@ -127,37 +138,40 @@ bool UZenohSubsystem::IsConnected(FName ConnectionName) const
 
 UZenohTopicListener* UZenohSubsystem::SubscribeToTopic(FName ConnectionName, FString Topic)
 {
-    // Tell the background thread to listen to the network
-    {
-        FScopeLock Lock(&ConnectionMapLock);
-        if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
-        {
-            if (*BackendPtr)
-            {
-                (*BackendPtr)->Subscribe(Topic);
-            }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[Zenoh] Failed to Subscribe: Connection '%s' not found!"), *ConnectionName.ToString());
-            return nullptr; // Return nothing so the Blueprint knows it failed
-        }
-    }
-
     // Generate a unique key for this specific route (e.g., "Docker::sim/state")
     FString RoutingKey = ConnectionName.ToString() + TEXT("::") + Topic;
 
+    // 2. If a listener object doesn't exist yet, create it instantly so BP can bind to it.
+    UZenohTopicListener* Listener = TopicListeners.FindRef(RoutingKey);
+    if (!Listener)
+    {
+        Listener = NewObject<UZenohTopicListener>(this);
+        TopicListeners.Add(RoutingKey, Listener);
+    }
+    
+    // Tell the background thread to listen to the network
+    FScopeLock Lock(&ConnectionMapLock);
+    if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
+    {
+        if (*BackendPtr)
+        {
+            (*BackendPtr)->Subscribe(Topic);
+        }
+    }
+    else
+    {
+        // The connection isn't ready yet. Store it in our back pocket.
+        PendingSubscriptions.FindOrAdd(ConnectionName).AddUnique(Topic);
+        UE_LOG(LogTemp, Log, TEXT("[Zenoh] Connection '%s' not ready. Deferring subscription to '%s'."), *ConnectionName.ToString(), *Topic);
+    }
+    
     // If a listener object already exists for this topic, just hand it back!
     if (TopicListeners.Contains(RoutingKey))
     {
         return TopicListeners[RoutingKey];
     }
-
-    // Otherwise, create a new Proxy Object, save it in the dictionary, and return it.
-    UZenohTopicListener* NewListener = NewObject<UZenohTopicListener>(this);
-    TopicListeners.Add(RoutingKey, NewListener);
     
-    return NewListener;
+    return Listener;
 }
 
 bool UZenohSubsystem::Publish(FName ConnectionName, FString Topic, FString Message)

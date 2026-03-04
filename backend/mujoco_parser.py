@@ -3,230 +3,124 @@ import json
 import time
 import mujoco
 import numpy as np
+import world_builder 
 
-# Configuration Constants
 ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
-STATE_TOPIC = "sim/world/state"
+STATE_TOPIC = "sim/world/state" 
 DEBUG_XML_PATH = "/app/debug_world.xml" 
 
-# Thresholds: 1 millimeter for position, ~0.5 degrees for rotation
-POS_TOLERANCE = 0.001 
-QUAT_TOLERANCE = 0.01
+class StatePublisher:
+    def __init__(self, session):
+        self.session = session
+        self.world_pub = session.declare_publisher(STATE_TOPIC)
+        self.agent_pubs = {}
+        self.last_state = {}
 
-def has_moved_visually(old_pos, new_pos, old_quat, new_quat):
-    pos_diff = np.linalg.norm(np.array(new_pos) - np.array(old_pos))
-    if pos_diff > POS_TOLERANCE:
-        return True
+    def extract_and_publish(self, model, data, dynamic_props):
+        world_payload = {"objects": []}
+        agent_payloads = {}
+        has_world_updates = False
         
-    # Quick quaternion distance (1.0 means identical, 0.0 means 180 deg apart)
-    quat_dot = abs(np.dot(old_quat, new_quat))
-    if quat_dot < (1.0 - QUAT_TOLERANCE):
-        return True
-        
-    return False
-
-def generate_mujoco_xml(json_data):
-    """Translates the Unreal JSON into MuJoCo MJCF XML format."""
-    
-    # Start the XML with standard physics parameters
-    xml = ['<mujoco model="RoboSimUE_World">']
-    xml.append('  <compiler angle="radian"/>')
-    xml.append('  <option gravity="0 0 -9.81"/>') # Standard Earth gravity
-    
-    # Define materials and lighting for the visualizer
-    xml.append('  <asset>')
-    xml.append('    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>')
-    xml.append('    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" width="512" height="512"/>')
-    xml.append('    <material name="grid_mat" texture="grid" texrepeat="1 1" texuniform="true" reflectance="0.2"/>')
-    xml.append('  </asset>')
-    
-    xml.append('  <worldbody>')
-    xml.append('    <light diffuse=".5 .5 .5" pos="0 0 10" dir="0 0 -1"/>')
-
-    dynamic_objects = [] # Keep track of what we need to simulate
-
-    # Loop through every object sent from Unreal
-    for obj in json_data.get('objects', []):
-        name = obj['name']
-        mesh_type = obj['mesh'].lower()
-        
-        # Convert arrays to space-separated strings for XML
-        pos_str = f"{obj['position'][0]} {obj['position'][1]} {obj['position'][2]}"
-        quat_str = f"{obj['quat'][0]} {obj['quat'][1]} {obj['quat'][2]} {obj['quat'][3]}"
-        
-        # FLOOR (Static)
-        if mesh_type == 'plane' or mesh_type == 'floor':
-            # Plane size is half-x and half-y. 
-            size_str = f"{obj['size'][0]} {obj['size'][1]} 0.1" 
-            xml.append(f'    <!-- Floor -->')
-            xml.append(f'    <geom name="{name}" type="plane" pos="{pos_str}" quat="{quat_str}" size="{size_str}" material="grid_mat"/>')
-            
-        # PHYSICS OBJECTS (Dynamic)
-        else:
-            dynamic_objects.append(name)
-
-            xml.append(f'    <!-- {name} -->')
-            # The body defines the center of mass and starting position
-            xml.append(f'    <body name="{name}" pos="{pos_str}" quat="{quat_str}">')
-            # freejoint makes it fall and react to collisions
-            xml.append(f'      <freejoint name="{name}_joint"/>')
-            
-            if mesh_type == 'cube':
-                size_str = f"{obj['size'][0]} {obj['size'][1]} {obj['size'][2]}"
-                xml.append(f'      <geom type="box" size="{size_str}" rgba="0.8 0.2 0.2 1" mass="1.0"/>')
+        # Props
+        for name in dynamic_props:
+            try:
+                mj_pos, mj_quat = data.body(name).xpos, data.body(name).xquat 
+                ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
+                ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
                 
-            elif mesh_type == 'sphere':
-                # Sphere only takes ONE size parameter (radius)
-                radius = obj['size'][0] 
-                xml.append(f'      <geom type="sphere" size="{radius}" rgba="0.2 0.2 0.8 1" mass="1.0"/>')
+                if self._check_movement(name, ue_pos, ue_quat):
+                    world_payload["objects"].append({"name": name, "pos": ue_pos, "quat": ue_quat})
+                    self.last_state[name] = {'pos': ue_pos, 'quat': ue_quat}
+                    has_world_updates = True
+            except KeyError: pass
+            
+        # Agent Joints
+        for j in range(model.njnt):
+            if model.jnt_type[j] in [mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE]:
+                jnt_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                if not jnt_name: continue
+                    
+                val = float(data.qpos[model.jnt_qposadr[j]])
                 
-            xml.append('    </body>')
+                if f"jnt_{jnt_name}" not in self.last_state or abs(val - self.last_state[f"jnt_{jnt_name}"]) >= 0.001:
+                    body_id = model.jnt_bodyid[j]
+                    agent_name = "unknown_agent"
+                    
+                    while body_id != 0:
+                        b_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                        if b_name and b_name.endswith("__root"):
+                            agent_name = b_name.split("__root")[0]
+                            break
+                        body_id = model.body_parentid[body_id]
 
-    xml.append('  </worldbody>')
-    xml.append('</mujoco>')
-    
-    return "\n".join(xml), dynamic_objects
+                    if agent_name not in agent_payloads:
+                        agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
+                        
+                    if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE:
+                        agent_payloads[agent_name]["joints"]["hinge"][jnt_name] = -val
+                    else:
+                        agent_payloads[agent_name]["joints"]["slide"][jnt_name] = val
+                        
+                    self.last_state[f"jnt_{jnt_name}"] = val
+                    
+        # Publish
+        if has_world_updates:
+            self.world_pub.put(json.dumps(world_payload))
+            
+        for agent_name, payload in agent_payloads.items():
+            if agent_name not in self.agent_pubs:
+                self.agent_pubs[agent_name] = self.session.declare_publisher(f"sim/agent/{agent_name}/state")
+            self.agent_pubs[agent_name].put(json.dumps(payload))
+
+    def _check_movement(self, name, new_pos, new_quat):
+        if name not in self.last_state: return True
+        if np.linalg.norm(np.array(new_pos) - np.array(self.last_state[name]['pos'])) > 0.001: return True
+        if abs(np.dot(new_quat, self.last_state[name]['quat'])) < 0.99: return True
+        return False
 
 def main():
-    print("[Python] Starting MuJoCo Zenoh Listener...")
+    print("[RoboSim] Starting MuJoCo Node...")
+    session = zenoh.open(zenoh.Config.from_json5(f'{{"mode": "client", "connect": {{"endpoints": ["{ZENOH_ENDPOINT}"]}}}}'))
+    state_pub = StatePublisher(session)
     
-    # Connect to Unreal
-    conf = zenoh.Config()
-    conf.insert_json5("mode", "'client'")
-    conf.insert_json5("connect/endpoints", f"['{ZENOH_ENDPOINT}']")
-    session = zenoh.open(conf)
-    
-    # Create a publisher for sending the physics state back
-    state_pub = session.declare_publisher(STATE_TOPIC)
+    physics_model, physics_data, dynamic_props, is_ready = None, None, [], False
 
-    print(f"[Python] Connected! Waiting for world data on '{INIT_TOPIC}'...")
-
-    # Flag to keep the loop running until world is loaded
-    world_loaded = False
-    physics_model = None
-    physics_data = None
-    dynamic_bodies = []
-
-    def on_init_message(sample):
-        nonlocal world_loaded, physics_model, physics_data, dynamic_bodies
+    def on_init(sample):
+        nonlocal physics_model, physics_data, dynamic_props, is_ready
+        xml_str, dynamic_props = world_builder.build_world(json.loads(sample.payload.to_string()))
         
-        # Decode the JSON string sent from Unreal
-        payload = sample.payload.to_string()
-        json_data = json.loads(payload)
-        print(f"\n[Python] Received World Data! ({len(json_data['objects'])} objects found)")
-        
-        # Generate XML
-        xml_string, dynamic_bodies = generate_mujoco_xml(json_data)
-        
-        # Save to a file so it can be viewed in Windows
-        with open(DEBUG_XML_PATH, "w") as f:
-            f.write(xml_string)
-        print(f"[Python] Saved debug XML to: {DEBUG_XML_PATH}")
-        
-        # Load the world into MuJoCo's physics engine
+        # 1. Boot Docker Simulation directly from memory strings!
         try:
-            physics_model = mujoco.MjModel.from_xml_string(xml_string)
+            physics_model = mujoco.MjModel.from_xml_string(xml_str)
             physics_data = mujoco.MjData(physics_model)
-            print("[Python] SUCCESS! MuJoCo Physics Engine initialized and ready.")
-            world_loaded = True
+            print("[RoboSim] SUCCESS! Physics Engine Online.")
+            is_ready = True
         except Exception as e:
-            print(f"[Python] ERROR Loading MuJoCo: {e}")
+            print(f"[RoboSim] FATAL ERROR Loading MuJoCo: {e}")
+            
+        # 2. Write a clean, relative-path XML purely for Windows debugging
+        windows_xml = xml_str.replace('/app/assets/', 'assets/').replace('/app/backend/assets/', 'assets/')
+        with open(DEBUG_XML_PATH, "w") as f:
+            f.write(windows_xml)
 
-    # Subscribe to the topic
-    sub = session.declare_subscriber(INIT_TOPIC, on_init_message)
-
-    # Keep script alive while waiting
-    while not world_loaded:
-        time.sleep(0.1)
-        
-    # Clean up subscriber since we only need the init message once
-    sub.undeclare()
-
-    # ==========================================
-    # THE SIMULATION LOOP
-    # ==========================================
-    print("[Python] Starting Physics Simulation Loop! (Ctrl+C to stop).")
+    sub = session.declare_subscriber(INIT_TOPIC, on_init)
     
-    # Target 60 FPS update rate to Unreal
+    while not is_ready: time.sleep(0.1)
+    sub.undeclare() 
+    
+    print("[RoboSim] Running Physics Loop (60 FPS)...")
     frame_time = 1.0 / 60.0 
-
-    # Dict to track last sent state for each object
-    last_sent_states = {}
-
-    # # Debug and performance analysis
-    # frame_counter = 0
-    # skipped_objects_this_second = 0
-    # total_objects_this_second = 0
-    
     try:
         while True:
             step_start = time.perf_counter()
+            for _ in range(8): mujoco.mj_step(physics_model, physics_data)
+            state_pub.extract_and_publish(physics_model, physics_data, dynamic_props)
             
-            # 1. Step the Physics Engine (MuJoCo default timestep is 0.002s)
-            # We step it ~8 times to simulate ~0.016s of time (1/60th of a sec)
-            for _ in range(8):
-                mujoco.mj_step(physics_model, physics_data)
-                
-            # 2. Gather the new positions
-            state_dict = {"objects": []}
-            
-            for name in dynamic_bodies:
-                # total_objects_this_second += 1 # Track total possible updates
-
-                # Get raw MuJoCo arrays
-                mj_pos = physics_data.body(name).xpos
-                mj_quat = physics_data.body(name).xquat # MuJoCo format: [w, x, y, z]
-
-                # Check if this object has moved significantly since last sent state
-                needs_update = True
-                if name in last_sent_states:
-                    old_pos, old_quat = last_sent_states[name]
-                    if not has_moved_visually(old_pos, mj_pos, old_quat, mj_quat):
-                        needs_update = False
-                        # skipped_objects_this_second += 1 # Track savings
-
-                if needs_update:
-                    # Update last sent state
-                    last_sent_states[name] = (mj_pos.copy(), mj_quat.copy())
-                
-                    # Math Conversion: Back to Unreal Format!
-                    # Meters -> Centimeters, and Right-Hand -> Left-Hand (Invert Y)
-                    ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
-                    
-                    # Quat Conversion: [w, x, y, z] -> [-x, y, -z, w] (Revert our earlier inversion)
-                    ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
-                    
-                    state_dict["objects"].append({
-                        "name": name,
-                        "pos": ue_pos,
-                        "quat": ue_quat
-                    })
-                
-            # 3. Publish back to Unreal
-            if len(state_dict["objects"]) > 0:
-                state_pub.put(json.dumps(state_dict))
-
-            # # Print Debug Stats Once Per Second (approx 60 frames)
-            # frame_counter += 1
-            # if frame_counter >= 60:
-            #     if total_objects_this_second > 0:
-            #         percent_saved = (skipped_objects_this_second / total_objects_this_second) * 100
-            #         print(f"[Debug] Delta Updates: Skipped {skipped_objects_this_second}/{total_objects_this_second} object updates ({percent_saved:.1f}% bandwidth saved this second).")
-                
-            #     # Reset counters for the next second
-            #     frame_counter = 0
-            #     skipped_objects_this_second = 0
-            #     total_objects_this_second = 0
-            
-            # 4. Sleep to match Real-Time
-            elapsed = time.perf_counter() - step_start
-            sleep_time = frame_time - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-                
+            sleep_time = frame_time - (time.perf_counter() - step_start)
+            if sleep_time > 0: time.sleep(sleep_time)
     except KeyboardInterrupt:
-        print("\n[Python] Simulation Stopped by User.")
+        print("\n[RoboSim] Stopped safely.")
 
 if __name__ == "__main__":
     main()

@@ -118,5 +118,7 @@ private:
     // Dictionary of Delegates for specific topics. This allows Blueprints to bind custom events to specific topics, instead of using the global OnMessageReceived delegate and filtering by topic manually.
     UPROPERTY()
     TMap<FString, UZenohTopicListener*> TopicListeners;
-    
+
+    // Stores subscriptions requested BEFORE a connection is fully established (The Race Condition Fix)
+    TMap<FName, TArray<FString>> PendingSubscriptions;
 };
