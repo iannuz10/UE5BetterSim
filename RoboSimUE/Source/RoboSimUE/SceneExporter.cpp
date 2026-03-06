@@ -76,6 +76,8 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		}
 
 		ObjJson->SetStringField(TEXT("mesh"), MeshType);
+		bool bIsStatic = Actor->ActorHasTag(FName("StaticProp"));
+		ObjJson->SetBoolField(TEXT("is_static"), bIsStatic);
 
 		// ==========================================
 		// MATH TRANSFORMS (MuJoCo format)

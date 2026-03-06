@@ -8,7 +8,7 @@ def process_agent(file_path, name, pos, quat, is_mobile):
     base_dir = os.path.dirname(abs_file)
     base_mjcf = abs_file
     
-    # 1. COMPILE URDF SAFELY (No Poisoned Caches)
+    # 1. COMPILE URDF SAFELY 
     if abs_file.endswith('.urdf'):
         base_mjcf = abs_file.replace('.urdf', '.mjcf.xml')
         
@@ -21,7 +21,7 @@ def process_agent(file_path, name, pos, quat, is_mobile):
         pristine_block = '\n  <mujoco>\n    <compiler strippath="false" balanceinertia="true" discardvisual="false"/>\n  </mujoco>\n'
         urdf_text = re.sub(r'(<robot[^>]*>)', r'\1' + pristine_block, urdf_text, count=1)
         
-        # Save to a HIDDEN temp file, compile, and delete temp. Your original URDF is never altered!
+        # Save to a HIDDEN temp file, compile, and delete temp. Original URDF is never altered
         temp_urdf = abs_file.replace('.urdf', '_temp.urdf')
         with open(temp_urdf, 'w') as f:
             f.write(urdf_text)
