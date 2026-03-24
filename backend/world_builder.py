@@ -1,12 +1,12 @@
 import os
 import xml.etree.ElementTree as ET
-import urdf_converter # Uses the safe, pristine converter you built in Step 1!
 
 class WorldBuilder:
     def __init__(self, json_data):
         self.objects = json_data.get('objects', [])
         self.dynamic_props = []
         self.inserted_assets = set()
+        self.inserted_physics_elements = set() 
 
     def build(self):
         main_mujoco = ET.Element('mujoco', {'model': 'RoboSimUE_World'})
@@ -32,7 +32,7 @@ class WorldBuilder:
 
             # --- AGENTS (Robots) ---
             if mesh_type == 'agent' and obj.get('file_path'):
-                self._process_agent(obj, main_asset, main_worldbody, pos_str, quat_str)
+                self._process_agent(obj, main_mujoco, main_asset, main_worldbody, pos_str, quat_str)
                 continue
             
             # --- STATIC ENVIRONMENT ---
@@ -56,7 +56,7 @@ class WorldBuilder:
             
             if mesh_type == 'cube':
                 size = obj.get('size', [0.5, 0.5, 0.5])
-                ET.SubElement(prop_body, 'geom', {'type': 'box', 'size': f"{size[0]} {size[1]} {size[2]}", 'rgba': '0.8 0.2 0.2 1', 'mass': '1.0'})
+                ET.SubElement(prop_body, 'geom', {'type': 'box', 'size': f"{size[0]} {size[1]} {size[2]}", 'rgba': '0.8 0.2 0.2 1', 'mass': '50.0'})
             elif mesh_type == 'sphere':
                 radius = obj.get('size', [0.5])[0]
                 ET.SubElement(prop_body, 'geom', {'type': 'sphere', 'size': str(radius), 'rgba': '0.2 0.2 0.8 1', 'mass': '1.0'})
@@ -73,47 +73,92 @@ class WorldBuilder:
         xml_string = ET.tostring(main_mujoco, encoding='unicode')
         return xml_string, self.dynamic_props
 
-    def _process_agent(self, obj, main_asset, main_worldbody, pos_str, quat_str):
-        urdf_path = obj.get('file_path')
+    def _process_agent(self, obj, main_mujoco, main_asset, main_worldbody, pos_str, quat_str):
+        mjcf_path = obj.get('file_path')
         name = obj.get('name')
         
-        # Temporary heuristic: If the file path lacks 'kuka', treat it as mobile.
-        is_mobile = obj.get('is_mobile', not ('kuka' in str(urdf_path).lower()))
+        is_mobile = obj.get('is_mobile', not ('kuka' in str(mjcf_path).lower()))
 
-        pristine_mjcf = urdf_converter.convert_urdf_to_mjcf(urdf_path)
-        urdf_dir = os.path.dirname(os.path.abspath(urdf_path))
+        abs_mjcf_path = os.path.abspath(mjcf_path)
+        mjcf_dir = os.path.dirname(abs_mjcf_path)
 
-        agent_tree = ET.parse(pristine_mjcf)
+        try:
+            agent_tree = ET.parse(abs_mjcf_path)
+        except Exception as e:
+            print(f"[WorldBuilder] ERROR: Could not parse {abs_mjcf_path}. Error: {e}")
+            return
+            
         agent_root = agent_tree.getroot()
 
-        # Merge Assets (Absolute Paths)
+        # 1. Merge Compiler & Options (THE TRUE NaN FIX FOR MENAGERIE)
+        agent_compiler = agent_root.find('compiler')
+        if agent_compiler is not None:
+            main_compiler = main_mujoco.find('compiler')
+            for key, val in agent_compiler.attrib.items():
+                if key not in ['meshdir', 'texturedir', 'angle']: 
+                    main_compiler.set(key, val)
+            meshdir = agent_compiler.get('meshdir', '')
+            texturedir = agent_compiler.get('texturedir', meshdir)
+        else:
+            meshdir = ''
+            texturedir = ''
+
+        agent_option = agent_root.find('option')
+        if agent_option is not None:
+            main_option = main_mujoco.find('option')
+            for key, val in agent_option.attrib.items():
+                if key != 'gravity': # Respect the master world's gravity
+                    main_option.set(key, val)
+
+        # 2. Merge Assets (Absolute Paths)
         agent_asset = agent_root.find('asset')
         if agent_asset is not None:
             for asset in list(agent_asset):
-                if asset.tag == 'mesh':
+                if asset.tag in ['mesh', 'texture']:
                     mesh_file = asset.get('file')
                     if mesh_file and not os.path.isabs(mesh_file):
-                        asset.set('file', os.path.join(urdf_dir, mesh_file))
+                        target_dir = texturedir if asset.tag == 'texture' else meshdir
+                        full_path = os.path.normpath(os.path.join(mjcf_dir, target_dir, mesh_file))
+                        asset.set('file', full_path.replace('\\', '/'))
                 
-                asset_id = asset.get('name', asset.get('file', 'unknown'))
+                # FIX: Unnamed materials from Menagerie will no longer overwrite each other!
+                asset_id = asset.get('name', asset.get('file', f"unnamed_{asset.tag}_{id(asset)}"))
                 if asset_id not in self.inserted_assets:
                     main_asset.append(asset)
                     self.inserted_assets.add(asset_id)
 
-        # THE ULTIMATE FIX: The Master Wrapper
+        # 3. Merge the Physics Brain (Defaults, Motors, Sensors, Collisions)
+        physics_tags = ['default', 'actuator', 'sensor', 'tendon', 'contact', 'equality']
+        for tag_name in physics_tags:
+            agent_tag = agent_root.find(tag_name)
+            if agent_tag is not None:
+                main_tag = main_mujoco.find(tag_name)
+                if main_tag is None:
+                    main_tag = ET.SubElement(main_mujoco, tag_name)
+
+                for child in list(agent_tag):
+                    # Contacts use body1/body2 instead of names
+                    if child.tag == 'exclude':
+                        sig = f"exclude_{child.get('body1')}_{child.get('body2')}"
+                    else:
+                        sig = f"{tag_name}_{child.tag}_{child.get('name', '')}_{child.get('class', '')}"
+                        
+                    # Add to XML if it's uniquely named OR if it's completely unnamed
+                    if sig not in self.inserted_physics_elements or "unnamed" in sig or not sig.replace('_', ''):
+                        main_tag.append(child)
+                        self.inserted_physics_elements.add(sig)
+
+        # 4. The Master Wrapper
         agent_worldbody = agent_root.find('worldbody')
         if agent_worldbody is not None:
-            # We create an entirely new, empty body. 
             wrapper_body = ET.Element('body', {'name': f"{name}__root", 'pos': pos_str, 'quat': quat_str})
             
-            # If mobile, give the WRAPPER the freejoint. It has exactly 6 DOFs, keeping MuJoCo happy!
             if is_mobile:
                 ET.SubElement(wrapper_body, 'freejoint', {'name': f"{name}__freejoint"})
 
-            # Scoop EVERY piece of the robot (including loose Kuka bases) and put them inside the wrapper
             for child in list(agent_worldbody):
                 wrapper_body.append(child)
                 
             main_worldbody.append(wrapper_body)
                 
-        print(f"[WorldBuilder] Stitched Agent '{name}' into memory. Mobile: {is_mobile}")
+        print(f"[WorldBuilder] Stitched Native MJCF Agent '{name}' into memory. Mobile: {is_mobile}")

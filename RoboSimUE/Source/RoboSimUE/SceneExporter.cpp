@@ -54,7 +54,7 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		if (Actor->ActorHasTag(FName("Agent")))
 		{
 			MeshType = TEXT("agent");
-			ObjJson->SetStringField(TEXT("file_path"), FString::Printf(TEXT("assets/robots/%s/model.urdf"), *FileName));
+			ObjJson->SetStringField(TEXT("file_path"), FString::Printf(TEXT("assets/robots/%s.xml"), *FileName));
             
 			// Tell MuJoCo if this is a flying/walking robot or a bolted robotic arm!
 			bool bIsMobile = Actor->ActorHasTag(FName("Mobile"));
