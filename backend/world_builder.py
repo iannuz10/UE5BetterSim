@@ -65,10 +65,22 @@ class WorldBuilder:
                 if mesh_path:
                     abs_mesh = os.path.abspath(mesh_path)
                     mesh_name = f"{name}_mesh"
+                    
+                    # 1. PURE SCALE (No negative signs!)
+                    ue5_scale = obj.get('scale', [1.0, 1.0, 1.0])
+                    mj_scale = f"{ue5_scale[0] * 0.01} {ue5_scale[1] * 0.01} {ue5_scale[2] * 0.01}"
+
                     if mesh_name not in self.inserted_assets:
-                        ET.SubElement(main_asset, 'mesh', {'name': mesh_name, 'file': abs_mesh})
+                        ET.SubElement(main_asset, 'mesh', {'name': mesh_name, 'file': abs_mesh, 'scale': mj_scale})
                         self.inserted_assets.add(mesh_name)
-                    ET.SubElement(prop_body, 'geom', {'type': 'mesh', 'mesh': mesh_name, 'rgba': '0.7 0.7 0.7 1', 'mass': '1.0'})
+                    
+                    # 2. PURE GEOM (No quat overrides!)
+                    ET.SubElement(prop_body, 'geom', {
+                        'type': 'mesh', 
+                        'mesh': mesh_name, 
+                        'rgba': '0.7 0.7 0.7 1', 
+                        'mass': '1.0'
+                    })
 
         xml_string = ET.tostring(main_mujoco, encoding='unicode')
         return xml_string, self.dynamic_props
