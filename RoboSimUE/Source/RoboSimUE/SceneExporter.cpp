@@ -5,9 +5,62 @@
 #include "Kismet/GameplayStatics.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Misc/DateTime.h"
+#include "HAL/FileManager.h"
+
+// Define the static spam filter variable
+TSet<FString> USceneExporter::AlreadyWarnedActors;
+
+// ==========================================
+// TELEMETRY IMPLEMENTATION
+// ==========================================
+
+void USceneExporter::ClearSimulationLog()
+{
+	FString TelemetryLogPath = FPaths::ProjectSavedDir() + TEXT("Logs/RoboSim_Telemetry.log");
+	FString InitText = FString::Printf(TEXT("=== RoboSim Telemetry Log Initialized at %s ===\n"), *FDateTime::Now().ToString());
+    
+	// Default SaveStringToFile overwrites the file. Clean slate for the new run.
+	FFileHelper::SaveStringToFile(InitText, *TelemetryLogPath);
+	AlreadyWarnedActors.Empty();
+}
+
+void USceneExporter::WriteSimulationLog(const FString& Level, const FString& Message)
+{
+	FString TelemetryLogPath = FPaths::ProjectSavedDir() + TEXT("Logs/RoboSim_Telemetry.log");
+	FString Timestamp = FDateTime::Now().ToString(TEXT("%H:%M:%S"));
+	FString LogEntry = FString::Printf(TEXT("[%s] [%s] %s\n"), *Timestamp, *Level, *Message);
+    
+	// UE5 requires explicit Encoding and FileManager arguments before the WriteFlag.
+	FFileHelper::SaveStringToFile(
+		LogEntry, 
+		*TelemetryLogPath, 
+		FFileHelper::EEncodingOptions::AutoDetect, 
+		&IFileManager::Get(), 
+		FILEWRITE_Append
+	);
+
+	// Mirror to standard Output Log
+	if (Level == TEXT("ERROR") || Level == TEXT("FATAL")) {
+		UE_LOG(LogTemp, Error, TEXT("%s"), *LogEntry);
+	} else if (Level == TEXT("WARN")) {
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *LogEntry);
+	} else {
+		UE_LOG(LogTemp, Log, TEXT("%s"), *LogEntry);
+	}
+}
+
+// ==========================================
+// CORE LOGIC
+// ==========================================
 
 FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags)
 {
+	
+	WriteSimulationLog(TEXT("INFO"), TEXT("--- STARTING UE5 WORLD EXPORT ---"));
+	
 	// Init root JSON object 
 	TSharedPtr<FJsonObject> RootJson = MakeShareable(new FJsonObject());
 	TArray<TSharedPtr<FJsonValue>> ObjectsArray;
@@ -27,17 +80,17 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		}
 	}
 	
+	WriteSimulationLog(TEXT("INFO"), FString::Printf(TEXT("Discovered %d actors matching export tags."), FoundActors.Num()));
+	
 	for (AActor* Actor : FoundActors)
 	{
-		TSharedPtr<FJsonObject> ObjJson = MakeShareable(new FJsonObject());
-
 		FString ActorID = Actor->GetName();
-		ObjJson->SetStringField(TEXT("name"), ActorID);
+		FString ActorNameLower = ActorID.ToLower();
 
-		FString MeshType = TEXT("cube"); // Default fallback
-		FString FileName = ActorID; // Default fallback
-
-		// Check tags for mesh type and file name
+		// ------------------------------------------------------------------
+		// STRICT VALIDATION: File Tags
+		// ------------------------------------------------------------------
+		FString FileName = TEXT(""); 
 		for (FName Tag : Actor->Tags)
 		{
 			FString TagStr = Tag.ToString();
@@ -48,20 +101,39 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 			}
 		}
 
-		FString ActorNameLower = ActorID.ToLower();
+		// ------------------------------------------------------------------
+		// STRICT VALIDATION: Mesh Types
+		// If we don't know what it is, we abort this actor.
+		// ------------------------------------------------------------------
+		FString MeshType = TEXT("");
+		TSharedPtr<FJsonObject> ObjJson = MakeShareable(new FJsonObject());
+		ObjJson->SetStringField(TEXT("name"), ActorID);
 
 		// Determine mesh type based on tags
 		if (Actor->ActorHasTag(FName("Agent")))
 		{
+			if (FileName.IsEmpty())
+			{
+				WriteSimulationLog(TEXT("FATAL"), FString::Printf(TEXT("Agent '%s' is missing a 'File:XYZ' tag. Cannot export robot. Skipping."), *ActorID));
+				continue; // Bail out.
+			}
 			MeshType = TEXT("agent");
 			ObjJson->SetStringField(TEXT("file_path"), FString::Printf(TEXT("assets/robots/%s.xml"), *FileName));
             
-			// Tell MuJoCo if this is a flying/walking robot or a bolted robotic arm!
-			bool bIsMobile = Actor->ActorHasTag(FName("Mobile"));
-			ObjJson->SetBoolField(TEXT("is_mobile"), bIsMobile);
+			// Force explicit Mobile tag definition
+			if (!Actor->ActorHasTag(FName("Mobile")) && !Actor->ActorHasTag(FName("Bolted"))) {
+				WriteSimulationLog(TEXT("FATAL"), FString::Printf(TEXT("Agent '%s' lacks 'Mobile' or 'Bolted' tag. Physics will crash. Skipping."), *ActorID));
+				continue;
+			}
+			ObjJson->SetBoolField(TEXT("is_mobile"), Actor->ActorHasTag(FName("Mobile")));
 		}
 		else if (Actor->ActorHasTag(FName("Custom")))
 		{
+			if (FileName.IsEmpty())
+			{
+				WriteSimulationLog(TEXT("FATAL"), FString::Printf(TEXT("Custom mesh '%s' is missing a 'File:XYZ' tag. Skipping."), *ActorID));
+				continue; 
+			}
 			MeshType = TEXT("custom");
 			ObjJson->SetStringField(TEXT("file_path"), FString::Printf(TEXT("assets/environment/%s.obj"), *FileName));
 		}
@@ -69,13 +141,23 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		{
 			MeshType = TEXT("sphere");
 		}
-		// NEW: Smart detection! Catch floors and planes automatically to prevent the void-falling bug!
+		else if (Actor->ActorHasTag(FName("Cube")) || ActorNameLower.Contains(TEXT("cube")))
+		{
+			MeshType = TEXT("cube");
+		}
 		else if (Actor->ActorHasTag(FName("Plane")) || Actor->ActorHasTag(FName("Floor")) || ActorNameLower.Contains(TEXT("floor")) || ActorNameLower.Contains(TEXT("plane")))
 		{
 			MeshType = TEXT("plane");
 		}
+		else 
+		{
+			// We have absolutely no idea what this is. Don't guess.
+			WriteSimulationLog(TEXT("FATAL"), FString::Printf(TEXT("Actor '%s' has no recognizable type tags (Agent/Custom/Cube/etc). Skipping."), *ActorID));
+			continue; 
+		}
 
 		ObjJson->SetStringField(TEXT("mesh"), MeshType);
+		
 		bool bIsStatic = Actor->ActorHasTag(FName("StaticProp"));
 		ObjJson->SetBoolField(TEXT("is_static"), bIsStatic);
 
@@ -88,7 +170,6 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		FVector Pos = Actor->GetActorLocation() / 100.0; // cm to meters
 		Pos.Y = -Pos.Y; // Left to Right-handed conversion
 
-		UStaticMeshComponent* MeshComp = Actor->FindComponentByClass<UStaticMeshComponent>();
 		FQuat Quat = Actor->GetActorQuat();
 		FQuat SciRot(-Quat.X, Quat.Y, -Quat.Z, Quat.W); // Invert X and Z for right-handed
 
@@ -106,7 +187,22 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		QuatArray.Add(MakeShareable(new FJsonValueNumber(SciRot.Z)));
 		ObjJson->SetArrayField(TEXT("quat"), QuatArray);
 
-		if (MeshComp && MeshComp->GetStaticMesh())
+		// ------------------------------------------------------------------
+		// STRICT VALIDATION: Physical Bounds
+		// ------------------------------------------------------------------
+		UStaticMeshComponent* MeshComp = Actor->FindComponentByClass<UStaticMeshComponent>();
+
+		if (!MeshComp || !MeshComp->GetStaticMesh())
+		{
+			// Planes and pure Blueprint Agents might not have a static mesh root, which is fine.
+			// But if it's a cube, sphere, or custom prop, we NEED the mesh component to calculate physical size.
+			if (MeshType == TEXT("custom") || MeshType == TEXT("cube") || MeshType == TEXT("sphere")) 
+			{
+				WriteSimulationLog(TEXT("FATAL"), FString::Printf(TEXT("Actor '%s' (%s) lacks a valid UStaticMeshComponent. Cannot compute physics bounds. Skipping."), *ActorID, *MeshType));
+				continue;
+			}
+		}
+		else
 		{
 			// Get the raw, unrotated 3D model's bounding box
 			FBox LocalBox = MeshComp->GetStaticMesh()->GetBoundingBox();
@@ -133,7 +229,12 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 			ScaleArray.Add(MakeShareable(new FJsonValueNumber(ActorScale.Z)));
 			ObjJson->SetArrayField(TEXT("scale"), ScaleArray);
 		}
+		
+		// Only add to the final array if it survived all the gauntlets above.
 		ObjectsArray.Add(MakeShareable(new FJsonValueObject(ObjJson)));
+		
+		WriteSimulationLog(TEXT("DEBUG"), FString::Printf(TEXT("Exported Object: %s | Mesh: %s | Static: %s | Pos: [%.2f, %.2f, %.2f]"), 
+			*ActorID, *MeshType, bIsStatic ? TEXT("True") : TEXT("False"), Pos.X, Pos.Y, Pos.Z));
 	}
 
 	RootJson->SetArrayField(TEXT("objects"), ObjectsArray);
@@ -142,29 +243,54 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
 	FJsonSerializer::Serialize(RootJson.ToSharedRef(), Writer);
 
+	WriteSimulationLog(TEXT("INFO"), TEXT("--- EXPORT COMPLETE ---"));
+	
 	return OutputString;
 }
 
+// ==========================================
+// IMPORT LOGIC (Runs at 60Hz - Beware File I/O!)
+// ==========================================
+
 void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags, const FString& JsonString)
 {
+	// TODO [Performance]: Deserializing JSON 60 times a second on the game thread is brutal.
+	// If we scale to 1000+ objects, we need to swap Zenoh payloads to FlatBuffers or binary structs.
+	// For now, it works, but keep an eye on the Unreal profiler (stat dump).
+	
 	// Parse JSON String
 	TSharedPtr<FJsonObject> JsonObject;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
 
 	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Failed to parse JSON!"));
+		// We only log if it's not already in the spam filter, because bad JSON will fail 60 times a second.
+		if (!AlreadyWarnedActors.Contains(TEXT("ApplyWorldState_JSON_FAIL")))
+		{
+			WriteSimulationLog(TEXT("ERROR"), TEXT("ApplyWorldState: Failed to parse incoming JSON payload. Ensure Python is sending valid JSON."));
+			AlreadyWarnedActors.Add(TEXT("ApplyWorldState_JSON_FAIL"));
+			UE_LOG(LogTemp, Warning, TEXT("Failed to parse JSON!"));
+		}
 		return;
 	}
 
 	// Get objects array
 	const TArray<TSharedPtr<FJsonValue>>* ObjectsArray;
 	if (!JsonObject->TryGetArrayField(TEXT("objects"), ObjectsArray)){
-		UE_LOG(LogTemp, Warning, TEXT("JSON does not contain 'objects' array!"));
+		
+		if (!AlreadyWarnedActors.Contains(TEXT("ApplyWorldState_NO_OBJECTS")))
+		{
+			WriteSimulationLog(TEXT("ERROR"), TEXT("ApplyWorldState: JSON is valid, but missing 'objects' array."));
+			AlreadyWarnedActors.Add(TEXT("ApplyWorldState_NO_OBJECTS"));
+			UE_LOG(LogTemp, Warning, TEXT("JSON does not contain 'objects' array!"));
+		}
 		return;
 	}
 
 	// find all actors with received tag
+	// TODO [Architecture]: We are calling GetAllActorsWithTag EVERY FRAME. 
+	// This is incredibly expensive. We should cache these pointers on BeginPlay and update the cache 
+	// only if an actor is spawned/destroyed.
 	TArray<AActor*> FoundActors;
 	for (const FName& Tag : ActorTags)
 	{
@@ -183,27 +309,39 @@ void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, cons
 		if (!ObjMap.IsValid()) continue;
 
 		FString ActorName = ObjMap->GetStringField(TEXT("name"));
+		bool bFoundMatch = false;
+		
 		// Find the matching actor in Unreal
 		for (AActor* Actor : FoundActors)
 		{
 			if (Actor->GetName() == ActorName)
 			{
+				bFoundMatch = true;
 				// Apply Location and Rotation
 				const TArray<TSharedPtr<FJsonValue>>* PosArray;
 				const TArray<TSharedPtr<FJsonValue>>* QuatArray;
-				
-				if (ObjMap->TryGetArrayField(TEXT("pos"), PosArray) && PosArray->Num() == 3 && ObjMap->TryGetArrayField(TEXT("quat"), QuatArray) && QuatArray->Num() == 4)
+
+				// Strict validation: Don't set locations unless the arrays are perfectly sized
+				if (ObjMap->TryGetArrayField(TEXT("pos"), PosArray) && PosArray->Num() == 3 &&
+					ObjMap->TryGetArrayField(TEXT("quat"), QuatArray) && QuatArray->Num() == 4)
 				{
 					FVector NewPos((*PosArray)[0]->AsNumber(), (*PosArray)[1]->AsNumber(), (*PosArray)[2]->AsNumber());
 					// Remember: [X, Y, Z, W] in the Python script to match Unreal
 					FQuat NewQuat((*QuatArray)[0]->AsNumber(), (*QuatArray)[1]->AsNumber(), (*QuatArray)[2]->AsNumber(), (*QuatArray)[3]->AsNumber());
-					NewQuat.Normalize();
+					NewQuat.Normalize(); // Crucial to prevent physics explosions from float rounding errors
 					Actor->SetActorLocationAndRotation(NewPos, NewQuat, false, nullptr, ETeleportType::TeleportPhysics);
 				}
-                
 				break; 
 			}
 		}
+
+		// ANOMALY TRAP: Python sent coordinates for an object that UE5 can't find in the level!
+		if (!bFoundMatch && !AlreadyWarnedActors.Contains(ActorName))
+		{
+			WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("Received coordinates for '%s', but could not find an actor with that name/tag in UE5!"), *ActorName));
+			AlreadyWarnedActors.Add(ActorName);
+		}
+		
 	}
 	
 }
@@ -218,7 +356,6 @@ bool USceneExporter::ParseJointData(const FString& JsonString, TMap<FString, flo
 	const TSharedPtr<FJsonObject>* JointsObj;
 	if (JsonObject->TryGetObjectField(TEXT("joints"), JointsObj))
 	{
-		// NEW: Python now sends "hinge" and "slide" sub-objects!
 		const TSharedPtr<FJsonObject>* HingeObj;
 		if ((*JointsObj)->TryGetObjectField(TEXT("hinge"), HingeObj))
 		{
