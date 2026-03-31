@@ -148,7 +148,7 @@ def main():
 
     def on_init(sample):
         nonlocal physics_model, physics_data, dynamic_props, is_ready
-        logger.info("[RoboSim] Received UE5 World Data! Building simulation...")
+        logger.info("Received INIT payload from Unreal Engine. Building simulation...")
         
         try:
             json_payload = json.loads(sample.payload.to_string())
@@ -188,6 +188,9 @@ def main():
     logger.info("Entering Main Physics Loop (60 FPS)...")
     
     frame_time = 1.0 / 60.0 
+    frame_counter = 0
+    fallen_objects = set()
+    
     try:
         # TODO [ARCHITECTURE]: This is a naive async spin-loop. 
         # For true digital twinning, we need a Lockstep/Event-driven architecture where 
@@ -200,6 +203,28 @@ def main():
                 mujoco.mj_step(physics_model, physics_data)
                 
             state_pub.extract_and_publish(physics_model, physics_data, dynamic_props)
+
+            # --- TELEMETRY: ANOMALY DETECTOR ---
+            frame_counter += 1
+            if frame_counter % 60 == 0:
+                # Catch physics explosions (usually bad collision meshes)
+                if np.any(np.abs(physics_data.qvel) > 100.0):
+                    logger.warning("PHYSICS ANOMALY: Extreme joint velocity detected. Possible collision explosion or NaN values.")
+                
+                # Catch objects that clipped through the floor
+                for i in range(1, physics_model.nbody):
+                    pos_z = physics_data.xpos[i][2]
+                    if pos_z < -20.0:
+                        b_name = mujoco.mj_id2name(physics_model, mujoco.mjtObj.mjOBJ_BODY, i)
+                        if b_name and b_name not in fallen_objects:
+                            logger.warning(f"PHYSICS ANOMALY: Body '{b_name}' fell out of bounds (Z = {pos_z:.2f}m).")
+                            fallen_objects.add(b_name)
+                            
+                # Pipe MuJoCo's internal C-level warnings to our Python log
+                for i in range(mujoco.mjtWarning.mjNWARNING):
+                    if physics_data.warning[i].number > 0:
+                        logger.error(f"MUJOCO NATIVE WARNING (Type {i}): Triggered {physics_data.warning[i].number} times.")
+                        physics_data.warning[i].number = 0
             
             # Sleep to maintain ~60Hz (prone to OS scheduler drift)
             sleep_time = frame_time - (time.perf_counter() - step_start)

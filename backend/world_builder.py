@@ -15,7 +15,7 @@ class WorldBuilder:
         self.inserted_assets = set()
         self.inserted_physics_elements = set() 
 
-        logger.info(f"Initialized WorldBuilder. Validating {len(self.objects)} objects...")
+        logger.info(f"Initialized WorldBuilder. Validating {len(self.objects)} objects: {[obj.get('name', 'Unnamed') for obj in self.objects]}")
 
     def build(self):
         main_mujoco = ET.Element('mujoco', {'model': 'RoboSimUE_World'})
@@ -98,6 +98,7 @@ class WorldBuilder:
                     raise ValueError(f"Missing 'size' for cube '{name}'.")
                 size = obj['size']
                 ET.SubElement(prop_body, 'geom', {'type': 'box', 'size': f"{size[0]} {size[1]} {size[2]}", 'rgba': '0.8 0.2 0.2 1', 'mass': '50.0'})
+                logger.debug(f"Spawned Cube: {name} | Size: {size} | Static: {is_static} | Pos: {pos_str} | Quat: {quat_str}")
             
             elif mesh_type == 'sphere':
                 if 'size' not in obj:
@@ -105,6 +106,7 @@ class WorldBuilder:
                     raise ValueError(f"Missing 'size' for sphere '{name}'.")
                 radius = obj['size'][0]
                 ET.SubElement(prop_body, 'geom', {'type': 'sphere', 'size': str(radius), 'rgba': '0.2 0.2 0.8 1', 'mass': '1.0'})
+                logger.debug(f"Spawned Sphere: {name} | Radius: {radius} | Static: {is_static} | Pos: {pos_str} | Quat: {quat_str}")
             
             elif mesh_type == 'custom':
                 if 'file_path' not in obj:
@@ -141,7 +143,7 @@ class WorldBuilder:
                     'rgba': '0.7 0.7 0.7 1', 
                     'mass': '1.0'
                 })
-                logger.debug(f"Spawned Custom Mesh: {name} | Scale: {mj_scale} | Path: {abs_mesh}")
+                logger.debug(f"Spawned Custom Mesh: {name} | Scale: {mj_scale} | Path: {abs_mesh} | Static: {is_static} | Pos: {pos_str} | Quat: {quat_str}")
             else:
                 logger.critical(f"FATAL: Unrecognized mesh type '{mesh_type}' for object '{name}'.")
                 raise ValueError(f"Unrecognized mesh type: {mesh_type}")
@@ -167,7 +169,6 @@ class WorldBuilder:
 
         if not os.path.exists(abs_mjcf_path):
             logger.critical(f"FATAL: Agent MJCF file NOT FOUND on disk: '{abs_mjcf_path}'")
-            print(f"[WorldBuilder] FATAL: Agent MJCF file NOT FOUND on disk: '{abs_mjcf_path}'")
             raise FileNotFoundError(f"Missing MJCF for '{name}': {abs_mjcf_path}")
 
         mjcf_dir = os.path.dirname(abs_mjcf_path)
@@ -253,5 +254,4 @@ class WorldBuilder:
                 
             main_worldbody.append(wrapper_body)
                 
-        print(f"[WorldBuilder] Stitched Native MJCF Agent '{name}' into memory. Mobile: {is_mobile}")
-        logger.info(f"Stitched Native MJCF Agent '{name}' into memory. Mobile: {is_mobile}")
+        logger.info(f"Stitched Native MJCF Agent '{name}' into memory. Mobile: {is_mobile} | Pos: {pos_str} | Quat: {quat_str}")

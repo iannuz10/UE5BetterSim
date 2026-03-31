@@ -31,5 +31,7 @@ RoboSimUE/Plugins/*/Intermediate/
 # Ignore MuJoCo generated debug files
 debug_world.xml
 
-.png
+*.png
 backend/assets/
+
+*.log
