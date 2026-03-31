@@ -5,15 +5,33 @@ import mujoco
 import numpy as np
 import os
 from world_builder import WorldBuilder
+import logging
+
+# ==========================================
+# TELEMETRY SETUP
+# ==========================================
+# Wipes the log on every boot so we don't end up with a 50GB text file.
+logging.basicConfig(
+    filename='mujoco_run.log', 
+    filemode='w', 
+    level=logging.DEBUG, # Captures EVERYTHING (debug, info, warning, error)
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+
+logger = logging.getLogger("MuJoCo_Core")
+logger.info("Starting MuJoCo Physics Backend...")
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
+# TODO: Move these to a .env file or pass via command line args. Hardcoding Docker host IPs doesn't scale.
 ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
 STATE_TOPIC = "sim/world/state" 
 DEBUG_XML_PATH = "/app/debug_world.xml" 
 
+# Delta thresholds to prevent network spam if the robot is just vibrating slightly.
 POS_TOLERANCE = 0.001 
 QUAT_TOLERANCE = 0.01
 
@@ -29,11 +47,13 @@ class StatePublisher:
         agent_payloads = {}
         has_world_updates = False
         
-        # 1. Update Floating Props
+        # --- 1. PROPS ---
         for name in dynamic_props:
             try:
                 mj_pos = data.body(name).xpos
                 mj_quat = data.body(name).xquat 
+
+                # Math Transform: Right-Handed (MuJoCo) -> Left-Handed (UE5) + Meters to cm.
                 ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
                 ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
                 
@@ -43,7 +63,7 @@ class StatePublisher:
                     has_world_updates = True
             except KeyError: pass
             
-        # 2. Update Robot Joints
+        # --- 2. ROBOT JOINTS ---
         for j in range(model.njnt):
             jnt_type = model.jnt_type[j]
             if jnt_type in [mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE]:
@@ -53,9 +73,11 @@ class StatePublisher:
                 val = float(data.qpos[model.jnt_qposadr[j]])
                 state_key = f"jnt_{jnt_name}"
                 
+                # Only publish if the joint actually moved
                 if state_key not in self.last_state or abs(val - self.last_state[state_key]) >= 0.001:
                     
-                    # Identify which Agent owns this joint via the master wrapper suffix
+                    # Hacky tree traversal to find which robot owns this joint.
+                    # TODO: Cache this mapping on boot instead of traversing the tree every frame!
                     body_id = model.jnt_bodyid[j]
                     agent_name = "unknown_agent"
                     while body_id != 0:
@@ -67,7 +89,8 @@ class StatePublisher:
 
                     if agent_name not in agent_payloads:
                         agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
-                        
+                    
+                    # Flip hinge rotations for UE5's Left-Handed coordinate system. Slide joints are unaffected.
                     if jnt_type == mujoco.mjtJoint.mjJNT_HINGE:
                         agent_payloads[agent_name]["joints"]["hinge"][jnt_name] = -val # Left-Handed Flip
                     else:
@@ -75,18 +98,26 @@ class StatePublisher:
                         
                     self.last_state[state_key] = val
                     
-        # Publish
+        # --- 3. PUBLISH ---
         if has_world_updates:
-            self.world_pub.put(json.dumps(world_payload))
+            try:
+                self.world_pub.put(json.dumps(world_payload))
+            except Exception as e:
+                logger.error(f"Failed to encode/publish world payload: {e}")
             
         for agent_name, payload in agent_payloads.items():
             if agent_name not in self.agent_pubs:
+                # Dynamically create channels for new robots as they appear in the simulation. This allows for multiple agents without predefining them.
                 topic = f"sim/agent/{agent_name}/state"
                 self.agent_pubs[agent_name] = self.session.declare_publisher(topic)
-                print(f"[RoboSim] Opened dedicated channel: {topic}")
-            self.agent_pubs[agent_name].put(json.dumps(payload))
+                logger.info(f"Opened dedicated Zenoh channel: {topic}")
+            try:
+                self.agent_pubs[agent_name].put(json.dumps(payload))
+            except Exception as e:
+                logger.error(f"Failed to encode/publish agent payload for {agent_name}: {e}")
 
     def _check_movement(self, name, new_pos, new_quat):
+        # Quick tolerance check to avoid publishing microslips
         if name not in self.last_state: return True
         old_pos = self.last_state[name]['pos']
         old_quat = self.last_state[name]['quat']
@@ -95,14 +126,19 @@ class StatePublisher:
         return False
 
 # ==========================================
-# THE MAIN APPLICATION
+# MAIN APP
 # ==========================================
 def main():
-    print("[RoboSim] Starting Main Physics Node...")
-    conf = zenoh.Config()
-    conf.insert_json5("mode", "'client'")
-    conf.insert_json5("connect/endpoints", f"['{ZENOH_ENDPOINT}']")
-    session = zenoh.open(conf)
+    logger.info("Initializing Zenoh Router Connection...")
+    try:
+        conf = zenoh.Config()
+        conf.insert_json5("mode", "'client'")
+        conf.insert_json5("connect/endpoints", f"['{ZENOH_ENDPOINT}']")
+        session = zenoh.open(conf)
+        logger.info(f"Successfully connected to Zenoh at {ZENOH_ENDPOINT}")
+    except Exception as e:
+        logger.critical(f"FATAL: Could not connect to Zenoh router. Error: {e}")
+        return
     
     state_pub = StatePublisher(session)
     physics_model = None
@@ -112,50 +148,68 @@ def main():
 
     def on_init(sample):
         nonlocal physics_model, physics_data, dynamic_props, is_ready
-        print("\n[RoboSim] Received UE5 World Data! Building simulation...")
+        logger.info("[RoboSim] Received UE5 World Data! Building simulation...")
         
-        json_payload = json.loads(sample.payload.to_string())
+        try:
+            json_payload = json.loads(sample.payload.to_string())
+        except json.JSONDecodeError as e:
+            logger.critical(f"FATAL: Malformed JSON received on init topic. Error: {e}")
+            return
+        
         builder = WorldBuilder(json_payload)
-        xml_str, dynamic_props = builder.build()
+        
+        try:
+            xml_str, dynamic_props = builder.build()
+        except Exception as e:
+            logger.critical(f"WorldBuilder crashed during compilation: {e}")
+            return
         
         try:
             physics_model = mujoco.MjModel.from_xml_string(xml_str)
             physics_data = mujoco.MjData(physics_model)
             
+            # Dump the stitched XML for debugging
             windows_debug_xml = xml_str.replace('/app/backend/assets/', 'assets/').replace('/app/assets/', 'assets/')
             with open(DEBUG_XML_PATH, "w") as f:
                 f.write(windows_debug_xml)
-                
-            print("[RoboSim] SUCCESS! Physics Engine Online.")
+                logger.info(f"Debug XML saved to {DEBUG_XML_PATH}")
+            logger.info("SUCCESS! MuJoCo Physics Engine is Online and compiled.")
             is_ready = True
         except Exception as e:
-            print(f"[RoboSim] FATAL ERROR Loading MuJoCo: {e}")
+            logger.critical(f"FATAL ERROR Loading MuJoCo Physics Model: {e}")
 
     sub = session.declare_subscriber(INIT_TOPIC, on_init)
-    print(f"[RoboSim] Waiting for Unreal Engine on '{INIT_TOPIC}'...")
+    logger.info(f"Waiting for Unreal Engine on topic '{INIT_TOPIC}'...")
 
     while not is_ready:
         time.sleep(0.1)
         
     sub.undeclare() 
-    print("[RoboSim] Entering Main Physics Loop (60 FPS)...")
+    logger.info("Entering Main Physics Loop (60 FPS)...")
     
     frame_time = 1.0 / 60.0 
     try:
+        # TODO [ARCHITECTURE]: This is a naive async spin-loop. 
+        # For true digital twinning, we need a Lockstep/Event-driven architecture where 
+        # Unreal Engine or the real hardware clock drives the tick, not `time.sleep()`.
         while True:
             step_start = time.perf_counter()
             
+            # Step physics 8 times per render frame for stability, but this is a naive approach. A more robust solution would be to step based on actual elapsed time and handle variable frame rates.
             for _ in range(8):
                 mujoco.mj_step(physics_model, physics_data)
                 
             state_pub.extract_and_publish(physics_model, physics_data, dynamic_props)
             
+            # Sleep to maintain ~60Hz (prone to OS scheduler drift)
             sleep_time = frame_time - (time.perf_counter() - step_start)
             if sleep_time > 0: 
                 time.sleep(sleep_time)
                 
     except KeyboardInterrupt:
-        print("\n[RoboSim] Simulation Stopped safely.")
+        logger.info("Simulation Stopped safely via KeyboardInterrupt.")
+    except Exception as e:
+        logger.critical(f"FATAL RUNTIME ERROR in Physics Loop: {e}")
 
 if __name__ == "__main__":
     main()

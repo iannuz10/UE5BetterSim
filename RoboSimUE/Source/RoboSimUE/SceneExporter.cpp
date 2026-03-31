@@ -63,7 +63,7 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		else if (Actor->ActorHasTag(FName("Custom")))
 		{
 			MeshType = TEXT("custom");
-			ObjJson->SetStringField("file_path", FString::Printf(TEXT("assets/environment/%s.obj"), *FileName));
+			ObjJson->SetStringField(TEXT("file_path"), FString::Printf(TEXT("assets/environment/%s.obj"), *FileName));
 		}
 		else if (Actor->ActorHasTag(FName("Sphere")) || ActorNameLower.Contains(TEXT("sphere")))
 		{
@@ -88,6 +88,7 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		FVector Pos = Actor->GetActorLocation() / 100.0; // cm to meters
 		Pos.Y = -Pos.Y; // Left to Right-handed conversion
 
+		UStaticMeshComponent* MeshComp = Actor->FindComponentByClass<UStaticMeshComponent>();
 		FQuat Quat = Actor->GetActorQuat();
 		FQuat SciRot(-Quat.X, Quat.Y, -Quat.Z, Quat.W); // Invert X and Z for right-handed
 
@@ -105,7 +106,6 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 		QuatArray.Add(MakeShareable(new FJsonValueNumber(SciRot.Z)));
 		ObjJson->SetArrayField(TEXT("quat"), QuatArray);
 
-		UStaticMeshComponent* MeshComp = Actor->FindComponentByClass<UStaticMeshComponent>();
 		if (MeshComp && MeshComp->GetStaticMesh())
 		{
 			// Get the raw, unrotated 3D model's bounding box
@@ -124,9 +124,14 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 			TArray<TSharedPtr<FJsonValue>> SizeArray;
 			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.X / 100.0))); 
 			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.Y / 100.0))); 
-			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.Z / 100.0))); 
-            
+			SizeArray.Add(MakeShareable(new FJsonValueNumber(TrueExtent.Z / 100.0)));
 			ObjJson->SetArrayField(TEXT("size"), SizeArray);
+
+			TArray<TSharedPtr<FJsonValue>> ScaleArray;
+			ScaleArray.Add(MakeShareable(new FJsonValueNumber(ActorScale.X)));
+			ScaleArray.Add(MakeShareable(new FJsonValueNumber(ActorScale.Y)));
+			ScaleArray.Add(MakeShareable(new FJsonValueNumber(ActorScale.Z)));
+			ObjJson->SetArrayField(TEXT("scale"), ScaleArray);
 		}
 		ObjectsArray.Add(MakeShareable(new FJsonValueObject(ObjJson)));
 	}
