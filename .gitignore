@@ -7,6 +7,9 @@ RoboSimUE/Build/
 RoboSimUE/DerivedDataCache/
 RoboSimUE/Intermediate/
 RoboSimUE/Saved/
+RoboSimUE/Source/RoboSimUE/Vaiant_Combat/
+RoboSimUE/Source/RoboSimUE/Variant_Platforming/
+RoboSimUE/Source/RoboSimUE/Variant_SideScrolling/
 
 # Plugins (build outputs)
 RoboSimUE/Plugins/*/Binaries/
@@ -62,7 +65,8 @@ backend/log/
 *.glb
 *.gltf
 *.urdf
-
+.stl
+.obj
 # Explicitly ignore MuJoCo menagerie if present (large, external dataset)
 backend/assets/robots/
 backend/assets/environment/
