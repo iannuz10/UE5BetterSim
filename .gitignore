@@ -1,25 +1,25 @@
-# --- Python ---
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-
-# --- Operating System ---
-.DS_Store
-Thumbs.db
-
-# --- Unreal Engine Project Root ---
+# ==========================================
+# UE5 Project - RoboSimUE
+# ==========================================
+# Engine build/artifact folders
 RoboSimUE/Binaries/
+RoboSimUE/Build/
+RoboSimUE/DerivedDataCache/
 RoboSimUE/Intermediate/
 RoboSimUE/Saved/
-RoboSimUE/DerivedDataCache/
-RoboSimUE/Build/
 
-# --- Plugin Specific ---
+# Plugins (build outputs)
 RoboSimUE/Plugins/*/Binaries/
 RoboSimUE/Plugins/*/Intermediate/
 
-# --- Visual Studio / IDE ---
+# Project IDE/workspace files (can be regenerated)
+RoboSimUE/*.sln
+RoboSimUE/*.xcworkspace
+
+# ==========================================
+# Development environments & IDEs
+# ==========================================
+# Visual Studio
 .vs/
 *.sln
 *.VC.db
@@ -28,10 +28,71 @@ RoboSimUE/Plugins/*/Intermediate/
 *.sdf
 *.suo
 
-# Ignore MuJoCo generated debug files
-debug_world.xml
+# VS Code / JetBrains
+.vscode/
+/.idea/
 
-*.png
-backend/assets/
+# ==========================================
+# Python / Backend
+# ==========================================
+# Bytecode, caches, virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+pip-wheel-metadata/
 
+# Local virtualenvs (project-specific)
+backend/.venv/
+backend/.env
+.venv/
+venv/
+env/
+
+# ROS 2 workspace outputs
+backend/build/
+backend/install/
+backend/log/
+
+# ==========================================
+# Assets, generated files, and large exports
+# ==========================================
+# Ignore large generated asset exports but keep source meshes tracked.
+*.glb
+*.gltf
+*.urdf
+
+# Explicitly ignore MuJoCo menagerie if present (large, external dataset)
+backend/assets/robots/
+backend/assets/environment/
+
+# Don't ignore backend/assets/ entirely — keep authored meshes/versioned data tracked
+
+# ==========================================
+# Logs, debug, and local-only files
+# ==========================================
 *.log
+debug_world.xml
+*.tmp
+*~
+
+# ==========================================
+# OS files
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================================
+# Local tooling / workspace files (non-source)
+# ==========================================
+CLAUDE.local.md
+.planning/
+.mcp.json
+
+# Local tool folders often used for planning/agents — these are local-only
+rules/
+hooks/
+agents/
+skills/
