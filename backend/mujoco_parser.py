@@ -31,6 +31,8 @@ INIT_TOPIC = "sim/world/init"
 STATE_TOPIC = "sim/world/state" 
 DEBUG_XML_PATH = "/app/debug_world.xml" 
 
+# TODO: Add a topic to receive the end state from Unreal Engine so we can stop the simulation.
+
 # Delta thresholds to prevent network spam if the robot is just vibrating slightly.
 POS_TOLERANCE = 0.001 
 QUAT_TOLERANCE = 0.01
@@ -79,13 +81,17 @@ class StatePublisher:
                     # Hacky tree traversal to find which robot owns this joint.
                     # TODO: Cache this mapping on boot instead of traversing the tree every frame!
                     body_id = model.jnt_bodyid[j]
-                    agent_name = "unknown_agent"
+                    agent_name = None
                     while body_id != 0:
                         b_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
                         if b_name and b_name.endswith("__root"):
                             agent_name = b_name.replace("__root", "")
                             break
                         body_id = model.body_parentid[body_id]
+                    
+                    if agent_name is None:
+                        logger.critical(f"FATAL: Joint '{jnt_name}' is orphaned! It does not belong to any valid Agent wrapper.")
+                        raise RuntimeError(f"Orphaned joint detected: {jnt_name}")
 
                     if agent_name not in agent_payloads:
                         agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
@@ -190,7 +196,7 @@ def main():
     frame_time = 1.0 / 60.0 
     frame_counter = 0
     fallen_objects = set()
-    
+
     try:
         # TODO [ARCHITECTURE]: This is a naive async spin-loop. 
         # For true digital twinning, we need a Lockstep/Event-driven architecture where 
