@@ -182,8 +182,6 @@ class WorldBuilder:
         agent_root = agent_tree.getroot()
 
         # --- 1. MERGE COMPILER / MENAGERIE FIXES ---
-        # DeepMind Menagerie models often define meshdirs in the <compiler> tag. 
-        # We must extract this to build absolute paths before appending to the master XML.
         agent_compiler = agent_root.find('compiler')
         if agent_compiler is not None:
             main_compiler = main_mujoco.find('compiler')
@@ -200,10 +198,10 @@ class WorldBuilder:
         if agent_option is not None:
             main_option = main_mujoco.find('option')
             for key, val in agent_option.attrib.items():
-                if key != 'gravity': # Prevent agent from overriding global world gravity
+                if key != 'gravity': 
                     main_option.set(key, val)
 
-        # --- 2. ASSET RESOLUTION ---
+        # --- 2. ASSET RESOLUTION (Shared GPU Memory) ---
         agent_asset = agent_root.find('asset')
         if agent_asset is not None:
             for asset in list(agent_asset):
@@ -214,14 +212,42 @@ class WorldBuilder:
                         full_path = os.path.normpath(os.path.join(mjcf_dir, target_dir, mesh_file))
                         asset.set('file', full_path.replace('\\', '/'))
                 
-                # Protect against unnamed materials overwriting each other in a multi-agent simulation. We append a unique suffix to ensure global uniqueness in the MuJoCo namespace.
+                # We deduplicate assets globally so 10 robots only load 1 set of meshes
                 asset_id = asset.get('name', asset.get('file', f"unnamed_{asset.tag}_{id(asset)}"))
                 if asset_id not in self.inserted_assets:
                     main_asset.append(asset)
                     self.inserted_assets.add(asset_id)
 
-        # --- 3. PHYSICS BRAIN MERGE ---
-        physics_tags = ['default', 'actuator', 'sensor', 'tendon', 'contact', 'equality']
+        # --- 3. THE NAMESPACE PREFIXER ---
+        # To spawn multiple identical robots, every body, joint, motor, and sensor must have a unique name.
+        # We prefix them with the UE5 Actor Name (which is guaranteed unique).
+        prefix = f"{name}_"
+        
+        # Attributes that reference other physics elements (Notice we exclude 'mesh' and 'material')
+        ref_attributes = [
+            'joint', 'joint1', 'joint2', 
+            'body', 'body1', 'body2', 
+            'geom', 'geom1', 'geom2', 
+            'site', 'tendon'
+        ]
+
+        def apply_prefix(elem):
+            # 1. Rename the element itself
+            if 'name' in elem.attrib:
+                elem.set('name', prefix + elem.attrib['name'])
+            
+            # 2. Rename any attributes that point to other elements
+            for attr in ref_attributes:
+                if attr in elem.attrib:
+                    elem.set(attr, prefix + elem.attrib[attr])
+            
+            # 3. Recurse down the tree
+            for child in list(elem):
+                apply_prefix(child)
+
+        # --- 4. PHYSICS BRAIN MERGE (Motors, Sensors, Contacts) ---
+        # FIX: We MUST NOT deduplicate these! Every robot instance needs its own motors and sensors!
+        physics_tags = ['actuator', 'sensor', 'tendon', 'contact', 'equality']
         for tag_name in physics_tags:
             agent_tag = agent_root.find(tag_name)
             if agent_tag is not None:
@@ -230,26 +256,31 @@ class WorldBuilder:
                     main_tag = ET.SubElement(main_mujoco, tag_name)
 
                 for child in list(agent_tag):
-                    if child.tag == 'exclude':
-                        sig = f"exclude_{child.get('body1')}_{child.get('body2')}"
-                    else:
-                        sig = f"{tag_name}_{child.tag}_{child.get('name', '')}_{child.get('class', '')}"
-                        
-                    if sig not in self.inserted_physics_elements or "unnamed" in sig or not sig.replace('_', ''):
-                        main_tag.append(child)
-                        self.inserted_physics_elements.add(sig)
+                    apply_prefix(child) # Rename the motor, fix its joint target
+                    main_tag.append(child) # Add it straight to the world
 
-        # --- 4. THE WRAPPER BODY ---
-        # Wraps the entire agent tree in a dummy body to inject UE5 root location/rotation
+        # Handle <default> classes. These define physics materials (like mass/friction) and CAN be deduplicated globally.
+        agent_default = agent_root.find('default')
+        if agent_default is not None:
+            main_default = main_mujoco.find('default')
+            if main_default is None:
+                main_default = ET.SubElement(main_mujoco, 'default')
+            for child in list(agent_default):
+                sig = f"default_{child.get('class', '')}"
+                if sig not in self.inserted_physics_elements:
+                    main_default.append(child)
+                    self.inserted_physics_elements.add(sig)
+
+        # --- 5. THE WRAPPER BODY ---
         agent_worldbody = agent_root.find('worldbody')
         if agent_worldbody is not None:
             wrapper_body = ET.Element('body', {'name': f"{name}__root", 'pos': pos_str, 'quat': quat_str})
             
-            # If it's a mobile robot (like a dog), it needs a freejoint. Arms usually don't.
             if is_mobile:
                 ET.SubElement(wrapper_body, 'freejoint', {'name': f"{name}__freejoint"})
 
             for child in list(agent_worldbody):
+                apply_prefix(child) # Rename all bodies, joints, lights, and geoms
                 wrapper_body.append(child)
                 
             main_worldbody.append(wrapper_body)
