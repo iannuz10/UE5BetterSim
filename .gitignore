@@ -94,7 +94,8 @@ desktop.ini
 CLAUDE.local.md
 .planning/
 .mcp.json
-
+docs/
+CLAUDE.md
 # Local tool folders often used for planning/agents — these are local-only
 rules/
 hooks/
