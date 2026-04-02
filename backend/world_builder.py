@@ -166,6 +166,8 @@ class WorldBuilder:
         mjcf_path = obj['file_path']
         is_mobile = obj['is_mobile']
         abs_mjcf_path = os.path.abspath(mjcf_path)
+        # Define prefix here so it's available for asset name resolution below.
+        prefix = f"{name}_"
 
         if not os.path.exists(abs_mjcf_path):
             logger.critical(f"FATAL: Agent MJCF file NOT FOUND on disk: '{abs_mjcf_path}'")
@@ -212,23 +214,48 @@ class WorldBuilder:
                         full_path = os.path.normpath(os.path.join(mjcf_dir, target_dir, mesh_file))
                         asset.set('file', full_path.replace('\\', '/'))
                 
-                # We deduplicate assets globally so 10 robots only load 1 set of meshes
-                asset_id = asset.get('name', asset.get('file', f"unnamed_{asset.tag}_{id(asset)}"))
+                # For meshes, always assign an explicit prefixed name so MuJoCo's global asset
+                # namespace is fully isolated per robot instance. Without this, two different robot
+                # types whose files share the same stem (e.g. fr3/link1.obj and xarm7/link1.stl)
+                # would produce "repeated name 'link1' in mesh" even though they have different file paths.
+                if asset.tag == 'mesh':
+                    explicit = asset.get('name')
+                    if explicit:
+                        stem = explicit
+                    else:
+                        f_path = asset.get('file', '')
+                        stem = os.path.splitext(os.path.basename(f_path))[0] if f_path else f"unnamed_mesh_{id(asset)}"
+                    asset.set('name', prefix + stem)
+                    asset_id = prefix + stem
+                else:
+                    asset_id = asset.get('name', asset.get('file', f"unnamed_{asset.tag}_{id(asset)}"))
                 if asset_id not in self.inserted_assets:
+                    # Strip any 'class' reference — the class it pointed to will be renamed/prefixed
+                    # later, so keeping it would create a dangling reference for shared assets.
+                    if 'class' in asset.attrib:
+                        logger.debug(f"[ASSET] Stripping 'class' ref from shared asset '{asset_id}'.")
+                        del asset.attrib['class']
+                    file_hint = asset.get('file', '<no file>')
                     main_asset.append(asset)
                     self.inserted_assets.add(asset_id)
+                else:
+                    file_hint = asset.get('file', '<no file>')
 
         # --- 3. THE NAMESPACE PREFIXER ---
-        # To spawn multiple identical robots, every body, joint, motor, and sensor must have a unique name.
-        # We prefix them with the UE5 Actor Name (which is guaranteed unique).
-        prefix = f"{name}_"
-        
-        # Attributes that reference other physics elements (Notice we exclude 'mesh' and 'material')
+        # To spawn multiple identical robots, every body, joint, motor, sensor, and mesh must have a unique name.
+        # prefix was already defined above (before asset resolution).
+
+        # Attributes that reference other named physics elements.
+        # 'mesh' is included because mesh names are now prefixed per-instance in the asset loop above.
+        # 'material' is excluded — materials are shared across all robots and not prefixed.
         ref_attributes = [
-            'joint', 'joint1', 'joint2', 
-            'body', 'body1', 'body2', 
-            'geom', 'geom1', 'geom2', 
-            'site', 'tendon'
+            'joint', 'joint1', 'joint2',
+            'body', 'body1', 'body2',
+            'geom', 'geom1', 'geom2',
+            'site', 'tendon',
+            'class', 'childclass',
+            'mesh',
+            'target'  # light/camera target= references a body by name
         ]
 
         def apply_prefix(elem):
@@ -245,6 +272,14 @@ class WorldBuilder:
             for child in list(elem):
                 apply_prefix(child)
 
+        def prefix_default_tree(elem):
+            # Prefix the 'class' definition name if present.
+            # The root <default> has no 'class' attribute, so it is safely skipped.
+            if 'class' in elem.attrib:
+                elem.set('class', prefix + elem.attrib['class'])
+            for child in list(elem):
+                prefix_default_tree(child)
+
         # --- 4. PHYSICS BRAIN MERGE (Motors, Sensors, Contacts) ---
         # FIX: We MUST NOT deduplicate these! Every robot instance needs its own motors and sensors!
         physics_tags = ['actuator', 'sensor', 'tendon', 'contact', 'equality']
@@ -259,30 +294,86 @@ class WorldBuilder:
                     apply_prefix(child) # Rename the motor, fix its joint target
                     main_tag.append(child) # Add it straight to the world
 
-        # Handle <default> classes. These define physics materials (like mass/friction) and CAN be deduplicated globally.
+        # Prefix all <default class="..."> definition names so each robot instance has a fully
+        # isolated class namespace. Then always append the complete subtree — no deduplication
+        # needed since all names are now unique (e.g. Robot1_iiwa, Robot2_iiwa).
         agent_default = agent_root.find('default')
         if agent_default is not None:
+            prefix_default_tree(agent_default)
             main_default = main_mujoco.find('default')
             if main_default is None:
                 main_default = ET.SubElement(main_mujoco, 'default')
             for child in list(agent_default):
-                sig = f"default_{child.get('class', '')}"
-                if sig not in self.inserted_physics_elements:
-                    main_default.append(child)
-                    self.inserted_physics_elements.add(sig)
+                main_default.append(child)
+            logger.debug(f"Appended prefixed <default> subtree for agent '{name}'.")
 
         # --- 5. THE WRAPPER BODY ---
         agent_worldbody = agent_root.find('worldbody')
         if agent_worldbody is not None:
-            wrapper_body = ET.Element('body', {'name': f"{name}__root", 'pos': pos_str, 'quat': quat_str})
-            
-            if is_mobile:
-                ET.SubElement(wrapper_body, 'freejoint', {'name': f"{name}__freejoint"})
+            # Detect whether the MJCF's root body already owns a <freejoint>.
+            # MuJoCo rule: a <freejoint> can ONLY appear on a top-level body (direct child of
+            # <worldbody>). Wrapping such a body would nest it one level too deep → error:
+            # "free joint can only be used on top level".
+            root_body_with_freejoint = None
+            for wc in list(agent_worldbody):
+                if wc.tag == 'body' and any(gc.tag == 'freejoint' for gc in list(wc)):
+                    root_body_with_freejoint = wc
+                    break
 
-            for child in list(agent_worldbody):
-                apply_prefix(child) # Rename all bodies, joints, lights, and geoms
-                wrapper_body.append(child)
-                
-            main_worldbody.append(wrapper_body)
+            if root_body_with_freejoint is not None:
+                # --- PATH A: MJCF-owned root freejoint (e.g. locomotion humanoids/quadrupeds) ---
+                # Add worldbody children directly to main_worldbody so the freejoint stays top-level.
+                # Rename the root body from its MJCF name (e.g. "pelvis") to "_root" BEFORE
+                # apply_prefix runs, so the final name becomes "{name}__root" — this keeps
+                # StatePublisher's parent-chain traversal working without changes.
+                # Also patch any target= references to the original root body name (e.g. a light
+                # that tracks the CoM) to "_root" so apply_prefix resolves them correctly.
+                original_root_name = root_body_with_freejoint.get('name', '')
+                root_body_with_freejoint.set('name', '_root')
+                root_body_with_freejoint.set('pos', pos_str)
+                root_body_with_freejoint.set('quat', quat_str)
+
+                if original_root_name:
+                    def patch_root_refs(elem):
+                        if elem.get('target') == original_root_name:
+                            elem.set('target', '_root')
+                        for child_elem in list(elem):
+                            patch_root_refs(child_elem)
+                    patch_root_refs(agent_worldbody)
+
+                skipped_lights = 0
+                for child in list(agent_worldbody):
+                    if child.tag == 'light':
+                        skipped_lights += 1
+                        continue  # Strip standalone visualization lights (see PATH B comment below)
+                    apply_prefix(child)
+                    main_worldbody.append(child)
+                if skipped_lights:
+                    logger.debug(f"Stripped {skipped_lights} MJCF visualization light(s) from agent '{name}'.")
+                logger.debug(
+                    f"Mobile agent '{name}' has own root freejoint. "
+                    f"Added directly to worldbody as '{name}__root' (was '{original_root_name}')."
+                )
+
+            else:
+                # --- PATH B: Standard case (fixed-base robot, or mobile with no own freejoint) ---
+                # Robot MJCFs from Menagerie embed standalone visualization lights (trackcom, spotlight)
+                # designed for single-robot viewing in MuJoCo's own renderer. In a multi-robot scene
+                # these lights stack up, drastically altering scene lighting and adding render overhead.
+                # Our build() method already provides scene lighting — strip all robot-internal lights.
+                wrapper_body = ET.Element('body', {'name': f"{name}__root", 'pos': pos_str, 'quat': quat_str})
+                if is_mobile:
+                    ET.SubElement(wrapper_body, 'freejoint', {'name': f"{name}__freejoint"})
+                    logger.debug(f"Added wrapper freejoint for mobile agent '{name}'.")
+                skipped_lights = 0
+                for child in list(agent_worldbody):
+                    if child.tag == 'light':
+                        skipped_lights += 1
+                        continue
+                    apply_prefix(child)
+                    wrapper_body.append(child)
+                if skipped_lights:
+                    logger.debug(f"Stripped {skipped_lights} MJCF visualization light(s) from agent '{name}'.")
+                main_worldbody.append(wrapper_body)
                 
         logger.info(f"Stitched Native MJCF Agent '{name}' into memory. Mobile: {is_mobile} | Pos: {pos_str} | Quat: {quat_str}")

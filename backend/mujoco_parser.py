@@ -216,16 +216,24 @@ def main():
             logger.critical(f"WorldBuilder crashed during compilation: {e}")
             return
         
+        # Always dump the stitched XML before attempting to load — this way it's
+        # available for inspection even when MuJoCo's compiler rejects it.
         try:
-            physics_model = mujoco.MjModel.from_xml_string(xml_str)
-            physics_data = mujoco.MjData(physics_model)
-            
-            # Dump the stitched XML for debugging
             windows_debug_xml = xml_str.replace('/app/backend/assets/', 'assets/').replace('/app/assets/', 'assets/')
             with open(DEBUG_XML_PATH, "w") as f:
                 f.write(windows_debug_xml)
-                logger.info(f"Debug XML saved to {DEBUG_XML_PATH}")
-            logger.info("SUCCESS! MuJoCo Physics Engine is Online and compiled.")
+            logger.info(f"Debug XML saved to {DEBUG_XML_PATH} ({len(xml_str)} chars). Inspect this file if model load fails.")
+        except Exception as dump_err:
+            logger.warning(f"Could not write debug XML to disk: {dump_err}")
+
+        try:
+            physics_model = mujoco.MjModel.from_xml_string(xml_str)
+            physics_data = mujoco.MjData(physics_model)
+            logger.info(
+                f"SUCCESS! MuJoCo Physics Engine is Online. "
+                f"Bodies={physics_model.nbody} Joints={physics_model.njnt} "
+                f"Actuators={physics_model.nu} Meshes={physics_model.nmesh}"
+            )
             is_ready = True
         except Exception as e:
             logger.critical(f"FATAL ERROR Loading MuJoCo Physics Model: {e}")
@@ -250,7 +258,10 @@ def main():
         while True:
             step_start = time.perf_counter()
             
-            # Step physics 8 times per render frame for stability, but this is a naive approach. A more robust solution would be to step based on actual elapsed time and handle variable frame rates.
+            # Step physics N times per render frame.
+            # With a large joint count (60+ DOFs), 8 substeps × 60Hz = 480 steps/sec which is
+            # expensive. Reduce to 2 for complex scenes while keeping the 60Hz publish rate.
+            # Increase back to 8 only for scenes with fast dynamics or contact-heavy objects.
             for _ in range(8):
                 mujoco.mj_step(physics_model, physics_data)
                 
