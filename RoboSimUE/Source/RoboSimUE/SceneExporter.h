@@ -40,6 +40,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Import")
 	static bool ParseJointData(const FString& JsonString, TMap<FString, float>& OutHingeJoints, TMap<FString, float>& OutSlideJoints);
 
+	// ==========================================
+	// LATENCY PROBE
+	// ==========================================
+	// Extracts the _msg_id field from an agent state payload so Blueprint can publish an ACK.
+	// Returns an empty string if the field is absent (e.g., world state messages).
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Latency")
+	static FString GetMsgIdFromPayload(const FString& Payload);
+
 private:
 	// Anti-spam registry. Prevents the game loop from writing 10,000 lines a second to the hard drive if something breaks.
 	static TSet<FString> AlreadyWarnedActors;

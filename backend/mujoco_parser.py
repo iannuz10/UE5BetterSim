@@ -29,7 +29,10 @@ logger.info("Starting MuJoCo Physics Backend...")
 ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
 STATE_TOPIC = "sim/world/state" 
-DEBUG_XML_PATH = "/app/debug_world.xml" 
+DEBUG_XML_PATH = "/app/debug_world.xml"
+
+ACK_TOPIC_PREFIX = "sim/latency/ack"  # Full topic: sim/latency/ack/{agent_name}
+RTT_LOG_WINDOW = 60  # Log RTT stats every N acknowledged messages (~1 second at 60Hz)
 
 # TODO: Add a topic to receive the end state from Unreal Engine so we can stop the simulation.
 
@@ -43,6 +46,10 @@ class StatePublisher:
         self.world_pub = self.session.declare_publisher(STATE_TOPIC)
         self.agent_pubs = {}
         self.last_state = {}
+        self._msg_counter = 0
+        self._pending_acks = {}  # {msg_id: send_time_ns}
+        self._rtt_stats = {}     # {agent_name: {"samples": []}}
+        self._ack_subs = {}      # {agent_name: zenoh subscriber}
 
     def extract_and_publish(self, model, data, dynamic_props):
         world_payload = {"objects": []}
@@ -113,14 +120,53 @@ class StatePublisher:
             
         for agent_name, payload in agent_payloads.items():
             if agent_name not in self.agent_pubs:
-                # Dynamically create channels for new robots as they appear in the simulation. This allows for multiple agents without predefining them.
-                topic = f"sim/agent/{agent_name}/state"
-                self.agent_pubs[agent_name] = self.session.declare_publisher(topic)
-                logger.info(f"Opened dedicated Zenoh channel: {topic}")
+                # Dynamically create state publisher and ACK subscriber for each new agent.
+                state_topic = f"sim/agent/{agent_name}/state"
+                ack_topic = f"{ACK_TOPIC_PREFIX}/{agent_name}"
+                self.agent_pubs[agent_name] = self.session.declare_publisher(state_topic)
+                self._rtt_stats[agent_name] = {"samples": []}
+                self._ack_subs[agent_name] = self.session.declare_subscriber(ack_topic, self._make_ack_handler(agent_name))
+                logger.info(f"Opened dedicated Zenoh channels: {state_topic} | ACK: {ack_topic}")
             try:
+                payload["_msg_id"] = self._msg_counter
+                self._pending_acks[self._msg_counter] = time.time_ns()
+                self._msg_counter += 1
                 self.agent_pubs[agent_name].put(json.dumps(payload))
             except Exception as e:
                 logger.error(f"Failed to encode/publish agent payload for {agent_name}: {e}")
+
+    def _make_ack_handler(self, agent_name):
+        """Returns a Zenoh callback that computes RTT for a specific agent."""
+        def on_ack(sample):
+            try:
+                msg_id = int(sample.payload.to_string())
+            except ValueError:
+                logger.warning(f"[LATENCY/{agent_name}] Malformed ACK payload: '{sample.payload.to_string()}'")
+                return
+
+            send_ns = self._pending_acks.pop(msg_id, None)
+            if send_ns is None:
+                logger.warning(f"[LATENCY/{agent_name}] ACK for unknown msg_id={msg_id}. May have timed out or arrived late.")
+                return
+
+            rtt_ms = (time.time_ns() - send_ns) / 1e6
+            self._rtt_stats[agent_name]["samples"].append(rtt_ms)
+
+            samples = self._rtt_stats[agent_name]["samples"]
+            if len(samples) >= RTT_LOG_WINDOW:
+                avg = sum(samples) / len(samples)
+                mn = min(samples)
+                mx = max(samples)
+                variance = sum((x - avg) ** 2 for x in samples) / len(samples)
+                stddev = variance ** 0.5
+                logger.info(
+                    f"[LATENCY/{agent_name}] {len(samples)} samples | "
+                    f"min={mn:.2f}ms avg={avg:.2f}ms max={mx:.2f}ms stddev={stddev:.2f}ms"
+                )
+                if mx > 10.0:
+                    logger.warning(f"[LATENCY] REQ-B-01 VIOLATION: {agent_name} max RTT {mx:.2f}ms exceeds 10ms threshold.")
+                self._rtt_stats[agent_name]["samples"] = []
+        return on_ack
 
     def _check_movement(self, name, new_pos, new_quat):
         # Quick tolerance check to avoid publishing microslips
@@ -231,6 +277,13 @@ def main():
                     if physics_data.warning[i].number > 0:
                         logger.error(f"MUJOCO NATIVE WARNING (Type {i}): Triggered {physics_data.warning[i].number} times.")
                         physics_data.warning[i].number = 0
+
+                # Prune ACKs that never arrived (5 second timeout) to prevent memory leak
+                cutoff_ns = time.time_ns() - int(5e9)
+                stale_ids = [k for k, v in state_pub._pending_acks.items() if v < cutoff_ns]
+                for k in stale_ids:
+                    state_pub._pending_acks.pop(k, None)
+                    logger.warning(f"[LATENCY] ACK timeout for msg_id={k}. Payload may have been lost in transit.")
             
             # Sleep to maintain ~60Hz (prone to OS scheduler drift)
             sleep_time = frame_time - (time.perf_counter() - step_start)

@@ -346,6 +346,27 @@ void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, cons
 	
 }
 
+// ==========================================
+// LATENCY PROBE
+// ==========================================
+
+FString USceneExporter::GetMsgIdFromPayload(const FString& Payload)
+{
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Payload);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		return FString();
+	}
+	if (!JsonObject->HasField(TEXT("_msg_id")))
+	{
+		return FString();
+	}
+	int64 MsgId = (int64)JsonObject->GetNumberField(TEXT("_msg_id"));
+	return FString::Printf(TEXT("%lld"), MsgId);
+}
+
 bool USceneExporter::ParseJointData(const FString& JsonString, TMap<FString, float>& OutHingeJoints, TMap<FString, float>& OutSlideJoints)
 {
 	TSharedPtr<FJsonObject> JsonObject;
