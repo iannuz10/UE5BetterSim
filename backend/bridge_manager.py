@@ -39,7 +39,16 @@ class BridgeManager:
         """One-time scan of the model to map all joints to their parent agent bodies."""
         logger.info("Building Joint Manifest...")
         self._joint_agent_manifest.clear()
+        self._mobile_agents.clear()
         
+        for j in range(model.njnt):
+            if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+                body_id = model.jnt_bodyid[j]
+                b_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                if b_name and b_name.endswith("__root"):
+                    agent_name = b_name.replace("__root", "")
+                    self._mobile_agents[agent_name] = b_name
+
         for j in range(model.njnt):
             jnt_type = model.jnt_type[j]
             if jnt_type not in [mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE]:
