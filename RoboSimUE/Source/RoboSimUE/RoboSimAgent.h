@@ -22,15 +22,15 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoboSim|Agent")
     USceneComponent* RootFrameComponent;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoboSim|Agent")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoboSim|Agent")
     bool bIsMobile;
 
 public:    
     virtual void Tick(float DeltaTime) override;
 
     UFUNCTION(BlueprintCallable, Category = "RoboSim|Agent")
-    void CacheJointComponents(const TArray<FString>& JointNames, bool bInIsMobile, USceneComponent* InRootFrameComponent);
+    bool CacheJointComponents();
 
     UFUNCTION(BlueprintCallable, Category = "RoboSim|Agent")
-    void ApplyUnifiedState(const FString& JsonPayload);
+    bool ApplyState(const FString& JsonPayload);
 };

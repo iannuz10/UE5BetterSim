@@ -17,44 +17,59 @@ void ARoboSimAgent::Tick(float DeltaTime)
     Super::Tick(DeltaTime);
 }
 
-void ARoboSimAgent::CacheJointComponents(const TArray<FString>& JointNames, bool bInIsMobile, USceneComponent* InRootFrameComponent)
+bool ARoboSimAgent::CacheJointComponents()
 {
-    bIsMobile = bInIsMobile;
-    RootFrameComponent = InRootFrameComponent;
     JointsCache.Empty();
+
+    // Automatically assign appropriate tags
+    Tags.AddUnique(TEXT("Simulate"));
+    Tags.AddUnique(TEXT("Agent"));
+
+    if (bIsMobile)
+    {
+        Tags.AddUnique(TEXT("Mobile"));
+        Tags.Remove(TEXT("Bolted"));
+    }
+    else
+    {
+        Tags.AddUnique(TEXT("Bolted"));
+        Tags.Remove(TEXT("Mobile"));
+    }
+
+    RootFrameComponent = GetRootComponent();
+
+    if (bIsMobile && !RootFrameComponent)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ARoboSimAgent: Mobile agent missing root component."));
+        return false;
+    }
 
     TArray<USceneComponent*> AllComponents;
     GetComponents<USceneComponent>(AllComponents);
 
-    for (const FString& JointName : JointNames)
+    for (USceneComponent* Comp : AllComponents)
     {
-        FString TargetName = JointName + TEXT("_DefaultSceneRoot");
-        USceneComponent* FoundComponent = nullptr;
-
-        for (USceneComponent* Comp : AllComponents)
+        FString CompName = Comp->GetName();
+        if (CompName.EndsWith(TEXT("_DefaultSceneRoot")))
         {
-            if (Comp->GetName() == TargetName)
-            {
-                FoundComponent = Comp;
-                break;
-            }
-        }
-
-        if (FoundComponent)
-        {
-            JointsCache.Add(JointName, FoundComponent);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("ARoboSimAgent: Joint component not found for %s (Expected name: %s)"), *JointName, *TargetName);
+            FString JointName = CompName.LeftChop(17);
+            JointsCache.Add(JointName, Comp);
         }
     }
+
+    if (JointsCache.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ARoboSimAgent: No joint components found with '_DefaultSceneRoot' suffix."));
+        return false;
+    }
+
+    return true;
 }
 
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
-void ARoboSimAgent::ApplyUnifiedState(const FString& JsonPayload)
+bool ARoboSimAgent::ApplyState(const FString& JsonPayload)
 {
     TSharedPtr<FJsonObject> JsonObject;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonPayload);
@@ -62,7 +77,7 @@ void ARoboSimAgent::ApplyUnifiedState(const FString& JsonPayload)
     if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
     {
         UE_LOG(LogTemp, Error, TEXT("ARoboSimAgent: Failed to parse JSON payload."));
-        return;
+        return false;
     }
 
     // 1. Root Transform (Mobile Base)
@@ -126,4 +141,6 @@ void ARoboSimAgent::ApplyUnifiedState(const FString& JsonPayload)
             }
         }
     }
+
+    return true;
 }
