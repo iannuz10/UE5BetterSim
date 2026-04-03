@@ -1,0 +1,151 @@
+import zenoh
+import json
+import time
+import mujoco
+import numpy as np
+import logging
+
+logger = logging.getLogger("Bridge")
+
+class BridgeManager:
+    def __init__(self, session, telemetry):
+        self.session = session
+        self.telemetry = telemetry
+        self.world_pub = self.session.declare_publisher("sim/world/state")
+        
+        # Topic settings
+        self.ACK_TOPIC_PREFIX = "sim/latency/ack"
+        
+        # State tracking
+        self.agent_pubs = {}
+        self.last_state = {}
+        self._msg_counter = 0
+        self._ack_subs = {}
+        
+        # Joint Manifest: {jnt_index: agent_name}
+        self._joint_agent_manifest = {}
+
+        # Delta thresholds to prevent network spam
+        self.POS_TOLERANCE = 0.001 
+        self.QUAT_TOLERANCE = 0.01
+
+        # Subscribe to world ACKs immediately
+        self._ack_subs["world"] = self.session.declare_subscriber(
+            f"{self.ACK_TOPIC_PREFIX}/world", 
+            self._make_ack_handler("world")
+        )
+
+    def build_joint_manifest(self, model):
+        """One-time scan of the model to map all joints to their parent agent bodies."""
+        logger.info("Building Joint Manifest...")
+        self._joint_agent_manifest.clear()
+        
+        for j in range(model.njnt):
+            jnt_type = model.jnt_type[j]
+            if jnt_type not in [mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE]:
+                continue
+                
+            body_id = model.jnt_bodyid[j]
+            agent_name = None
+            
+            # Traverse up the tree to find the __root body
+            while body_id != 0:
+                b_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                if b_name and b_name.endswith("__root"):
+                    agent_name = b_name.replace("__root", "")
+                    break
+                body_id = model.body_parentid[body_id]
+            
+            if agent_name:
+                self._joint_agent_manifest[j] = agent_name
+            else:
+                jnt_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                logger.warning(f"Joint '{jnt_name}' is not child of any Agent root. It will not be published.")
+
+        logger.info(f"Manifest complete. Tracked {len(self._joint_agent_manifest)} joints across agents.")
+
+    def publish_state(self, model, data, dynamic_props):
+        """Extracts physics state and pushes to Zenoh."""
+        world_payload = {"objects": []}
+        agent_payloads = {}
+        has_world_updates = False
+        
+        # 1. PROPS
+        for name in dynamic_props:
+            mj_pos = data.body(name).xpos
+            mj_quat = data.body(name).xquat 
+
+            # MuJoCo (RH) -> UE5 (LH) + Meters to CM
+            ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
+            ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
+            
+            if self._check_movement(name, ue_pos, ue_quat):
+                world_payload["objects"].append({"name": name, "pos": ue_pos, "quat": ue_quat})
+                self.last_state[name] = {'pos': ue_pos, 'quat': ue_quat}
+                has_world_updates = True
+            
+        # 2. JOINTS (Using Manifest)
+        for j, agent_name in self._joint_agent_manifest.items():
+            jnt_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+            val = float(data.qpos[model.jnt_qposadr[j]])
+            state_key = f"jnt_{jnt_name}"
+            
+            if state_key not in self.last_state or abs(val - self.last_state[state_key]) >= 0.001:
+                if agent_name not in agent_payloads:
+                    agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
+                
+                jnt_type = model.jnt_type[j]
+                if jnt_type == mujoco.mjtJoint.mjJNT_HINGE:
+                    agent_payloads[agent_name]["joints"]["hinge"][jnt_name] = -val
+                else:
+                    agent_payloads[agent_name]["joints"]["slide"][jnt_name] = val
+                    
+                self.last_state[state_key] = val
+
+        # 3. TRANSMIT
+        timestamp = time.time_ns()
+
+        if has_world_updates:
+            world_payload["_msg_id"] = self._msg_counter
+            world_payload["_timestamp"] = timestamp
+            self.telemetry.register_message(self._msg_counter, "world")
+            self._msg_counter += 1
+            self.world_pub.put(json.dumps(world_payload))
+
+        for agent_name, payload in agent_payloads.items():
+            if agent_name not in self.agent_pubs:
+                self._setup_agent_channel(agent_name)
+            
+            payload["_msg_id"] = self._msg_counter
+            payload["_timestamp"] = timestamp
+            self.telemetry.register_message(self._msg_counter, agent_name)
+            self._msg_counter += 1
+            self.agent_pubs[agent_name].put(json.dumps(payload))
+
+    def _setup_agent_channel(self, agent_name):
+        state_topic = f"sim/agent/{agent_name}/state"
+        ack_topic = f"{self.ACK_TOPIC_PREFIX}/{agent_name}"
+        
+        self.agent_pubs[agent_name] = self.session.declare_publisher(state_topic)
+        self._ack_subs[agent_name] = self.session.declare_subscriber(
+            ack_topic, 
+            self._make_ack_handler(agent_name)
+        )
+        logger.info(f"Initialized agent bridge: {agent_name}")
+
+    def _make_ack_handler(self, agent_name):
+        def on_ack(sample):
+            try:
+                msg_id = int(sample.payload.to_string())
+                self.telemetry.handle_ack(agent_name, msg_id)
+            except ValueError:
+                pass
+        return on_ack
+
+    def _check_movement(self, name, new_pos, new_quat):
+        if name not in self.last_state: return True
+        old_pos = self.last_state[name]['pos']
+        old_quat = self.last_state[name]['quat']
+        if np.linalg.norm(np.array(new_pos) - np.array(old_pos)) > self.POS_TOLERANCE: return True
+        if abs(np.dot(old_quat, new_quat)) < (1.0 - self.QUAT_TOLERANCE): return True
+        return False

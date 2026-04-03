@@ -49,6 +49,9 @@ public:
 	static FString GetMsgIdFromPayload(const FString& Payload);
 
 private:
+	// Internal helper to apply transform data to an actor
+	static void ApplyTransformToActor(AActor* Actor, const TSharedPtr<FJsonObject>& ObjMap);
+
 	// Anti-spam registry. Prevents the game loop from writing 10,000 lines a second to the hard drive if something breaks.
 	static TSet<FString> AlreadyWarnedActors;
 };

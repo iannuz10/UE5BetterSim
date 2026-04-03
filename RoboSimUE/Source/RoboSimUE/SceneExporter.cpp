@@ -254,43 +254,24 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 
 void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags, const FString& JsonString)
 {
-	// TODO [Performance]: Deserializing JSON 60 times a second on the game thread is brutal.
-	// If we scale to 1000+ objects, we need to swap Zenoh payloads to FlatBuffers or binary structs.
-	// For now, it works, but keep an eye on the Unreal profiler (stat dump).
-	
 	// Parse JSON String
 	TSharedPtr<FJsonObject> JsonObject;
 	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
 
 	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
 	{
-		// We only log if it's not already in the spam filter, because bad JSON will fail 60 times a second.
 		if (!AlreadyWarnedActors.Contains(TEXT("ApplyWorldState_JSON_FAIL")))
 		{
-			WriteSimulationLog(TEXT("ERROR"), TEXT("ApplyWorldState: Failed to parse incoming JSON payload. Ensure Python is sending valid JSON."));
+			WriteSimulationLog(TEXT("ERROR"), TEXT("ApplyWorldState: Failed to parse incoming JSON payload."));
 			AlreadyWarnedActors.Add(TEXT("ApplyWorldState_JSON_FAIL"));
-			UE_LOG(LogTemp, Warning, TEXT("Failed to parse JSON!"));
 		}
 		return;
 	}
 
-	// Get objects array
 	const TArray<TSharedPtr<FJsonValue>>* ObjectsArray;
-	if (!JsonObject->TryGetArrayField(TEXT("objects"), ObjectsArray)){
-		
-		if (!AlreadyWarnedActors.Contains(TEXT("ApplyWorldState_NO_OBJECTS")))
-		{
-			WriteSimulationLog(TEXT("ERROR"), TEXT("ApplyWorldState: JSON is valid, but missing 'objects' array."));
-			AlreadyWarnedActors.Add(TEXT("ApplyWorldState_NO_OBJECTS"));
-			UE_LOG(LogTemp, Warning, TEXT("JSON does not contain 'objects' array!"));
-		}
-		return;
-	}
+	if (!JsonObject->TryGetArrayField(TEXT("objects"), ObjectsArray)) return;
 
 	// find all actors with received tag
-	// TODO [Architecture]: We are calling GetAllActorsWithTag EVERY FRAME. 
-	// This is incredibly expensive. We should cache these pointers on BeginPlay and update the cache 
-	// only if an actor is spawned/destroyed.
 	TArray<AActor*> FoundActors;
 	for (const FName& Tag : ActorTags)
 	{
@@ -302,7 +283,6 @@ void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, cons
 		}
 	}
 
-	// Loop through JSON objects and apply to actors
 	for (TSharedPtr<FJsonValue> ObjVal : *ObjectsArray)
 	{
 		TSharedPtr<FJsonObject> ObjMap = ObjVal->AsObject();
@@ -311,39 +291,50 @@ void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, cons
 		FString ActorName = ObjMap->GetStringField(TEXT("name"));
 		bool bFoundMatch = false;
 		
-		// Find the matching actor in Unreal
 		for (AActor* Actor : FoundActors)
 		{
 			if (Actor->GetName() == ActorName)
 			{
+				ApplyTransformToActor(Actor, ObjMap);
 				bFoundMatch = true;
-				// Apply Location and Rotation
-				const TArray<TSharedPtr<FJsonValue>>* PosArray;
-				const TArray<TSharedPtr<FJsonValue>>* QuatArray;
-
-				// Strict validation: Don't set locations unless the arrays are perfectly sized
-				if (ObjMap->TryGetArrayField(TEXT("pos"), PosArray) && PosArray->Num() == 3 &&
-					ObjMap->TryGetArrayField(TEXT("quat"), QuatArray) && QuatArray->Num() == 4)
-				{
-					FVector NewPos((*PosArray)[0]->AsNumber(), (*PosArray)[1]->AsNumber(), (*PosArray)[2]->AsNumber());
-					// Remember: [X, Y, Z, W] in the Python script to match Unreal
-					FQuat NewQuat((*QuatArray)[0]->AsNumber(), (*QuatArray)[1]->AsNumber(), (*QuatArray)[2]->AsNumber(), (*QuatArray)[3]->AsNumber());
-					NewQuat.Normalize(); // Crucial to prevent physics explosions from float rounding errors
-					Actor->SetActorLocationAndRotation(NewPos, NewQuat, false, nullptr, ETeleportType::TeleportPhysics);
-				}
 				break; 
 			}
 		}
 
-		// ANOMALY TRAP: Python sent coordinates for an object that UE5 can't find in the level!
 		if (!bFoundMatch && !AlreadyWarnedActors.Contains(ActorName))
 		{
-			WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("Received coordinates for '%s', but could not find an actor with that name/tag in UE5!"), *ActorName));
+			WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("Received coordinates for '%s', but no actor found."), *ActorName));
 			AlreadyWarnedActors.Add(ActorName);
 		}
-		
 	}
-	
+}
+
+void USceneExporter::ApplyTransformToActor(AActor* Actor, const TSharedPtr<FJsonObject>& ObjMap)
+{
+	if (!Actor || !ObjMap.IsValid()) return;
+
+	const TArray<TSharedPtr<FJsonValue>>* PosArray;
+	const TArray<TSharedPtr<FJsonValue>>* QuatArray;
+
+	if (ObjMap->TryGetArrayField(TEXT("pos"), PosArray) && PosArray->Num() == 3 &&
+		ObjMap->TryGetArrayField(TEXT("quat"), QuatArray) && QuatArray->Num() == 4)
+	{
+		FVector NewPos(
+			(*PosArray)[0]->AsNumber(), 
+			(*PosArray)[1]->AsNumber(), 
+			(*PosArray)[2]->AsNumber()
+		);
+		
+		FQuat NewQuat(
+			(*QuatArray)[0]->AsNumber(), 
+			(*QuatArray)[1]->AsNumber(), 
+			(*QuatArray)[2]->AsNumber(), 
+			(*QuatArray)[3]->AsNumber()
+		);
+		
+		NewQuat.Normalize();
+		Actor->SetActorLocationAndRotation(NewPos, NewQuat, false, nullptr, ETeleportType::TeleportPhysics);
+	}
 }
 
 // ==========================================
