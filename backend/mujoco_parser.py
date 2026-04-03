@@ -50,6 +50,51 @@ class StatePublisher:
         self._pending_acks = {}  # {msg_id: send_time_ns}
         self._rtt_stats = {}     # {agent_name: {"samples": []}}
         self._ack_subs = {}      # {agent_name: zenoh subscriber}
+        self._joint_agent_map = {}  # {joint_index: (agent_name, joint_name_str)}
+
+    def build_joint_agent_map(self, model):
+        """Build a one-time lookup dict: joint_index → (agent_name, joint_name).
+
+        Replaces the per-frame kinematic tree traversal in extract_and_publish.
+        Must be called once after WorldBuilder constructs the MuJoCo model,
+        and again if on_init fires a second time (model rebuild).
+        """
+        self._joint_agent_map = {}
+        agent_names_found = set()
+
+        for j in range(model.njnt):
+            jnt_type = model.jnt_type[j]
+            if jnt_type not in [mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE]:
+                continue
+
+            jnt_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+            if not jnt_name:
+                continue
+
+            # Walk the kinematic tree once to find the owning agent's __root body.
+            body_id = model.jnt_bodyid[j]
+            agent_name = None
+            while body_id != 0:
+                b_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                if b_name and b_name.endswith("__root"):
+                    agent_name = b_name[:-len("__root")]
+                    break
+                body_id = model.body_parentid[body_id]
+
+            if agent_name is None:
+                logger.critical(
+                    f"FATAL: Joint '{jnt_name}' is orphaned — no '__root' ancestor found. "
+                    f"Check WorldBuilder wrapping logic."
+                )
+                raise RuntimeError(f"Orphaned joint detected during map build: {jnt_name}")
+
+            self._joint_agent_map[j] = (agent_name, jnt_name)
+            agent_names_found.add(agent_name)
+
+        logger.info(
+            f"joint_to_agent map built: {len(self._joint_agent_map)} actuated joints "
+            f"across {len(agent_names_found)} agent(s): {sorted(agent_names_found)}"
+        )
 
     def extract_and_publish(self, model, data, dynamic_props):
         world_payload = {"objects": []}
@@ -73,43 +118,25 @@ class StatePublisher:
             except KeyError: pass
             
         # --- 2. ROBOT JOINTS ---
-        for j in range(model.njnt):
+        # Uses the pre-built _joint_agent_map (built once in build_joint_agent_map)
+        # to avoid kinematic tree traversal at 60Hz.
+        for j, (agent_name, jnt_name) in self._joint_agent_map.items():
             jnt_type = model.jnt_type[j]
-            if jnt_type in [mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE]:
-                jnt_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
-                if not jnt_name: continue
-                    
-                val = float(data.qpos[model.jnt_qposadr[j]])
-                state_key = f"jnt_{jnt_name}"
-                
-                # Only publish if the joint actually moved
-                if state_key not in self.last_state or abs(val - self.last_state[state_key]) >= 0.001:
-                    
-                    # Hacky tree traversal to find which robot owns this joint.
-                    # TODO: Cache this mapping on boot instead of traversing the tree every frame!
-                    body_id = model.jnt_bodyid[j]
-                    agent_name = None
-                    while body_id != 0:
-                        b_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
-                        if b_name and b_name.endswith("__root"):
-                            agent_name = b_name.replace("__root", "")
-                            break
-                        body_id = model.body_parentid[body_id]
-                    
-                    if agent_name is None:
-                        logger.critical(f"FATAL: Joint '{jnt_name}' is orphaned! It does not belong to any valid Agent wrapper.")
-                        raise RuntimeError(f"Orphaned joint detected: {jnt_name}")
+            val = float(data.qpos[model.jnt_qposadr[j]])
+            state_key = f"jnt_{jnt_name}"
 
-                    if agent_name not in agent_payloads:
-                        agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
-                    
-                    # Flip hinge rotations for UE5's Left-Handed coordinate system. Slide joints are unaffected.
-                    if jnt_type == mujoco.mjtJoint.mjJNT_HINGE:
-                        agent_payloads[agent_name]["joints"]["hinge"][jnt_name] = -val # Left-Handed Flip
-                    else:
-                        agent_payloads[agent_name]["joints"]["slide"][jnt_name] = val
-                        
-                    self.last_state[state_key] = val
+            # Only publish if the joint actually moved
+            if state_key not in self.last_state or abs(val - self.last_state[state_key]) >= 0.001:
+                if agent_name not in agent_payloads:
+                    agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
+
+                # Flip hinge rotations for UE5's Left-Handed coordinate system. Slide joints are unaffected.
+                if jnt_type == mujoco.mjtJoint.mjJNT_HINGE:
+                    agent_payloads[agent_name]["joints"]["hinge"][jnt_name] = -val  # Left-Handed Flip
+                else:
+                    agent_payloads[agent_name]["joints"]["slide"][jnt_name] = val
+
+                self.last_state[state_key] = val
                     
         # --- 3. PUBLISH ---
         if has_world_updates:
@@ -234,6 +261,7 @@ def main():
                 f"Bodies={physics_model.nbody} Joints={physics_model.njnt} "
                 f"Actuators={physics_model.nu} Meshes={physics_model.nmesh}"
             )
+            state_pub.build_joint_agent_map(physics_model)
             is_ready = True
         except Exception as e:
             logger.critical(f"FATAL ERROR Loading MuJoCo Physics Model: {e}")

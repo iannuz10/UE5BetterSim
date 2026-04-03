@@ -24,7 +24,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Logging")
 	static void ClearSimulationLog();
 
-	// Internal helper to format and write logs to disk and the UE5 console.
+	// Writes a timestamped entry to RoboSim_Telemetry.log and the UE5 Output Log.
+	// Level: "DEBUG", "INFO", "WARN", "ERROR", "FATAL".
+	// Callable from Blueprint so any actor (RoboSimAgent, SimManager, etc.) can log
+	// to the same file without depending on SceneExporter for anything else.
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Logging")
 	static void WriteSimulationLog(const FString& Level, const FString& Message);
 	
 	// ==========================================
