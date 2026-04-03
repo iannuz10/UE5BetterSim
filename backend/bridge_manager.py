@@ -24,6 +24,7 @@ class BridgeManager:
         
         # Joint Manifest: {jnt_index: agent_name}
         self._joint_agent_manifest = {}
+        self._mobile_agents = {}
 
         # Delta thresholds to prevent network spam
         self.POS_TOLERANCE = 0.001 
