@@ -1,4 +1,5 @@
 #include "RoboSimAgent.h"
+#include "SceneExporter.h"
 
 ARoboSimAgent::ARoboSimAgent()
 {
@@ -137,6 +138,19 @@ bool ARoboSimAgent::ApplyState(const FString& JsonPayload)
                     
                     // Apply translation. Assuming Z-axis is the slide axis.
                     (*CompPtr)->SetRelativeLocation(FVector(0.0f, 0.0f, ValueCm));
+                }
+            }
+        }
+    }
+
+    return true;
+}
+Apply translation. Assuming Z-axis is the slide axis.
+                    (*CompPtr)->SetRelativeLocation(FVector(0.0f, 0.0f, ValueCm));
+                }
+                else
+                {
+                    USceneExporter::WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("ApplyState: Slide joint %s not found in cache."), *Pair.Key));
                 }
             }
         }
