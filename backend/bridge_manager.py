@@ -84,7 +84,22 @@ class BridgeManager:
                 self.last_state[name] = {'pos': ue_pos, 'quat': ue_quat}
                 has_world_updates = True
             
-        # 2. JOINTS (Using Manifest)
+        # 2. AGENT ROOTS
+        for agent_name, root_body_name in self._mobile_agents.items():
+            mj_pos = data.body(root_body_name).xpos
+            mj_quat = data.body(root_body_name).xquat 
+
+            # MuJoCo (RH) -> UE5 (LH) + Meters to CM
+            ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
+            ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
+            
+            if self._check_movement(root_body_name, ue_pos, ue_quat):
+                if agent_name not in agent_payloads:
+                    agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
+                agent_payloads[agent_name]["root_transform"] = {"pos": ue_pos, "quat": ue_quat}
+                self.last_state[root_body_name] = {'pos': ue_pos, 'quat': ue_quat}
+
+        # 3. JOINTS (Using Manifest)
         for j, agent_name in self._joint_agent_manifest.items():
             jnt_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
             val = float(data.qpos[model.jnt_qposadr[j]])
