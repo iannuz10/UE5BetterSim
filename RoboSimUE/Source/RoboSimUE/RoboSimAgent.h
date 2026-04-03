@@ -22,6 +22,9 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoboSim|Agent")
     USceneComponent* RootFrameComponent;
 
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "RoboSim|Agent")
+    TMap<FString, FTransform> InitialTransformsCache;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoboSim|Agent")
     bool bIsMobile;
 

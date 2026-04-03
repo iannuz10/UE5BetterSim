@@ -1,5 +1,7 @@
 #include "RoboSimAgent.h"
 #include "SceneExporter.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 ARoboSimAgent::ARoboSimAgent()
 {
@@ -21,6 +23,7 @@ void ARoboSimAgent::Tick(float DeltaTime)
 bool ARoboSimAgent::CacheJointComponents()
 {
     JointsCache.Empty();
+    InitialTransformsCache.Empty();
 
     // Automatically assign appropriate tags
     Tags.AddUnique(TEXT("Simulate"));
@@ -41,7 +44,7 @@ bool ARoboSimAgent::CacheJointComponents()
 
     if (bIsMobile && !RootFrameComponent)
     {
-        UE_LOG(LogTemp, Error, TEXT("ARoboSimAgent: Mobile agent missing root component."));
+        USceneExporter::WriteSimulationLog(TEXT("ERROR"), TEXT("ARoboSimAgent: Mobile agent missing root component."));
         return false;
     }
 
@@ -54,21 +57,22 @@ bool ARoboSimAgent::CacheJointComponents()
         if (CompName.EndsWith(TEXT("_DefaultSceneRoot")))
         {
             FString JointName = CompName.LeftChop(17);
+            
+            // Cache the component and its rest transform
             JointsCache.Add(JointName, Comp);
+            InitialTransformsCache.Add(JointName, Comp->GetRelativeTransform());
+            USceneExporter::WriteSimulationLog(TEXT("DEBUG"), FString::Printf(TEXT("Cached joint: %s -> %s"), *JointName, *CompName));
         }
     }
 
     if (JointsCache.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("ARoboSimAgent: No joint components found with '_DefaultSceneRoot' suffix."));
+        USceneExporter::WriteSimulationLog(TEXT("WARN"), TEXT("ARoboSimAgent: No joint components found with '_DefaultSceneRoot' suffix."));
         return false;
     }
 
     return true;
 }
-
-#include "Serialization/JsonReader.h"
-#include "Serialization/JsonSerializer.h"
 
 bool ARoboSimAgent::ApplyState(const FString& JsonPayload)
 {
@@ -77,7 +81,7 @@ bool ARoboSimAgent::ApplyState(const FString& JsonPayload)
 
     if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
     {
-        UE_LOG(LogTemp, Error, TEXT("ARoboSimAgent: Failed to parse JSON payload."));
+        USceneExporter::WriteSimulationLog(TEXT("ERROR"), TEXT("ARoboSimAgent: Failed to parse JSON payload."));
         return false;
     }
 
@@ -116,10 +120,18 @@ bool ARoboSimAgent::ApplyState(const FString& JsonPayload)
                 if (CompPtr && *CompPtr)
                 {
                     float ValueRad = Pair.Value->AsNumber();
-                    float ValueDeg = FMath::RadiansToDegrees(ValueRad);
                     
-                    // Apply rotation. Assuming Z-axis is the hinge axis (standard for UE5 imported robots).
-                    (*CompPtr)->SetRelativeRotation(FRotator(0.0f, ValueDeg, 0.0f));
+                    FTransform* InitialTransformPtr = InitialTransformsCache.Find(Pair.Key);
+                    if (InitialTransformPtr)
+                    {
+                        // Apply rotation around local Z-axis (standard for UE5 imported robots).
+                        FQuat AddedRot(FVector(0.0f, 0.0f, 1.0f), ValueRad);
+                        (*CompPtr)->SetRelativeRotation(InitialTransformPtr->GetRotation() * AddedRot);
+                    }
+                }
+                else
+                {
+                    USceneExporter::WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("ApplyState: Hinge joint %s not found in cache."), *Pair.Key));
                 }
             }
         }
@@ -136,17 +148,13 @@ bool ARoboSimAgent::ApplyState(const FString& JsonPayload)
                     float ValueMeters = Pair.Value->AsNumber();
                     float ValueCm = ValueMeters * 100.0f;
                     
-                    // Apply translation. Assuming Z-axis is the slide axis.
-                    (*CompPtr)->SetRelativeLocation(FVector(0.0f, 0.0f, ValueCm));
-                }
-            }
-        }
-    }
-
-    return true;
-}
-Apply translation. Assuming Z-axis is the slide axis.
-                    (*CompPtr)->SetRelativeLocation(FVector(0.0f, 0.0f, ValueCm));
+                    FTransform* InitialTransformPtr = InitialTransformsCache.Find(Pair.Key);
+                    if (InitialTransformPtr)
+                    {
+                        // Apply translation along local Z-axis.
+                        FVector AddedLoc(0.0f, 0.0f, ValueCm);
+                        (*CompPtr)->SetRelativeLocation(InitialTransformPtr->GetLocation() + AddedLoc);
+                    }
                 }
                 else
                 {
