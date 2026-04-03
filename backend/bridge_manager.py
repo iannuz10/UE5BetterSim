@@ -111,14 +111,19 @@ class BridgeManager:
 
         # 3. JOINTS (Using Manifest)
         for j, agent_name in self._joint_agent_manifest.items():
-            jnt_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+            jnt_name_full = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
             val = float(data.qpos[model.jnt_qposadr[j]])
-            state_key = f"jnt_{jnt_name}"
+            state_key = f"jnt_{jnt_name_full}"
             
             if state_key not in self.last_state or abs(val - self.last_state[state_key]) >= 0.001:
                 if agent_name not in agent_payloads:
                     agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
                 
+                # Strip the agent prefix from the joint name to reduce payload size
+                # The world_builder prepends '{agent_name}_' to all joints.
+                prefix = f"{agent_name}_"
+                jnt_name = jnt_name_full[len(prefix):] if jnt_name_full.startswith(prefix) else jnt_name_full
+
                 jnt_type = model.jnt_type[j]
                 if jnt_type == mujoco.mjtJoint.mjJNT_HINGE:
                     agent_payloads[agent_name]["joints"]["hinge"][jnt_name] = -val
