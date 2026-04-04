@@ -100,6 +100,8 @@ GEMINI.md
 .gemini
 conductor/ 
 .claude
+AGENTS.md
+.agents/
 
 # Local tool folders often used for planning/agents — these are local-only
 rules/
