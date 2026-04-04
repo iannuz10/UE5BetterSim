@@ -13,7 +13,7 @@ from engine_manager import PhysicsEngine
 ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
 FPS = 60
-SUBSTEPS = 8
+SUBSTEPS = 2
 
 # Telemetry setup
 logging.basicConfig(
