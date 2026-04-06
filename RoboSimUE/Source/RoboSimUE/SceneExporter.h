@@ -36,6 +36,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Import", meta = (WorldContext = "WorldContextObject"))
 	static void ApplyWorldStateJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags, const FString& JsonString);
 
+	/** 
+	 * Build the static actor cache for O(1) lookups during state application.
+	 * Should be called once on BeginPlay in the Simulation Manager.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Optimization", meta = (WorldContext = "WorldContextObject"))
+	static void BuildActorCache(const UObject* WorldContextObject, const TArray<FName>& ActorTags);
+
+	/**
+	 * Clears the actor cache. Should be called on EndPlay.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Simulation|Optimization")
+	static void ClearActorCache();
+
 	// Splits the data into two Maps so Blueprints know which math to apply
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Import")
 	static bool ParseJointData(const FString& JsonString, TMap<FString, float>& OutHingeJoints, TMap<FString, float>& OutSlideJoints);
@@ -48,10 +61,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Latency")
 	static FString GetMsgIdFromPayload(const FString& Payload);
 
-private:
+	private:
 	// Internal helper to apply transform data to an actor
 	static void ApplyTransformToActor(AActor* Actor, const TSharedPtr<FJsonObject>& ObjMap);
 
+	// Map of Actor Name to a weak pointer of the Actor for O(1) retrieval during 60Hz loop.
+	// This is static because USceneExporter is a BlueprintFunctionLibrary.
+	static TMap<FString, TWeakObjectPtr<AActor>> CachedSimulatedActors;
+
 	// Anti-spam registry. Prevents the game loop from writing 10,000 lines a second to the hard drive if something breaks.
 	static TSet<FString> AlreadyWarnedActors;
-};
+	};

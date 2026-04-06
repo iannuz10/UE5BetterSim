@@ -13,6 +13,9 @@
 // Define the static spam filter variable
 TSet<FString> USceneExporter::AlreadyWarnedActors;
 
+// Define the static actor cache
+TMap<FString, TWeakObjectPtr<AActor>> USceneExporter::CachedSimulatedActors;
+
 // ==========================================
 // TELEMETRY IMPLEMENTATION
 // ==========================================
@@ -271,16 +274,14 @@ void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, cons
 	const TArray<TSharedPtr<FJsonValue>>* ObjectsArray;
 	if (!JsonObject->TryGetArrayField(TEXT("objects"), ObjectsArray)) return;
 
-	// find all actors with received tag
-	TArray<AActor*> FoundActors;
-	for (const FName& Tag : ActorTags)
+	// O(1) PERFORMANCE OPTIMIZATION: 
+	// Instead of UGameplayStatics::GetAllActorsWithTag at 60Hz, we use our pre-built cache.
+	
+	// If the cache is empty, we perform a late initialization as a fallback, 
+	// though the Simulation Manager should ideally call BuildActorCache on BeginPlay.
+	if (CachedSimulatedActors.Num() == 0)
 	{
-		TArray<AActor*> TempActors;
-		UGameplayStatics::GetAllActorsWithTag(WorldContextObject, Tag, TempActors);
-		for (AActor* Actor : TempActors)
-		{
-			FoundActors.AddUnique(Actor);
-		}
+		BuildActorCache(WorldContextObject, ActorTags);
 	}
 
 	for (TSharedPtr<FJsonValue> ObjVal : *ObjectsArray)
@@ -289,24 +290,61 @@ void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, cons
 		if (!ObjMap.IsValid()) continue;
 
 		FString ActorName = ObjMap->GetStringField(TEXT("name"));
-		bool bFoundMatch = false;
 		
-		for (AActor* Actor : FoundActors)
+		// O(1) Lookup
+		if (TWeakObjectPtr<AActor>* WeakActorPtr = CachedSimulatedActors.Find(ActorName))
 		{
-			if (Actor->GetName() == ActorName)
+			if (WeakActorPtr->IsValid())
 			{
-				ApplyTransformToActor(Actor, ObjMap);
-				bFoundMatch = true;
-				break; 
+				ApplyTransformToActor(WeakActorPtr->Get(), ObjMap);
+			}
+			else 
+			{
+				// Stale reference - remove from cache to prevent further lookups
+				CachedSimulatedActors.Remove(ActorName);
+				WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("Actor '%s' was in cache but is no longer valid. Removed."), *ActorName));
 			}
 		}
-
-		if (!bFoundMatch && !AlreadyWarnedActors.Contains(ActorName))
+		else if (!AlreadyWarnedActors.Contains(ActorName))
 		{
-			WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("Received coordinates for '%s', but no actor found."), *ActorName));
+			WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("Received coordinates for '%s', but no actor found in cache."), *ActorName));
 			AlreadyWarnedActors.Add(ActorName);
 		}
 	}
+}
+
+void USceneExporter::BuildActorCache(const UObject* WorldContextObject, const TArray<FName>& ActorTags)
+{
+	WriteSimulationLog(TEXT("INFO"), TEXT("Building Simulation Actor Cache..."));
+	
+	CachedSimulatedActors.Empty();
+
+	TArray<AActor*> FoundActors;
+	for (const FName& Tag : ActorTags)
+	{
+		TArray<AActor*> TempActors;
+		UGameplayStatics::GetAllActorsWithTag(WorldContextObject, Tag, TempActors);
+		for (AActor* Actor : TempActors)
+		{
+			if (Actor)
+			{
+				FoundActors.AddUnique(Actor);
+			}
+		}
+	}
+
+	for (AActor* Actor : FoundActors)
+	{
+		CachedSimulatedActors.Add(Actor->GetName(), Actor);
+	}
+
+	WriteSimulationLog(TEXT("INFO"), FString::Printf(TEXT("Cache built successfully. Monitoring %d actors."), CachedSimulatedActors.Num()));
+}
+
+void USceneExporter::ClearActorCache()
+{
+	WriteSimulationLog(TEXT("INFO"), TEXT("Clearing Simulation Actor Cache."));
+	CachedSimulatedActors.Empty();
 }
 
 void USceneExporter::ApplyTransformToActor(AActor* Actor, const TSharedPtr<FJsonObject>& ObjMap)

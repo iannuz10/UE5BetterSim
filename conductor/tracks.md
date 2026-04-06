@@ -38,3 +38,8 @@ This file tracks all major tracks for the project. Each track has its own detail
   *Link: [./tracks/dual_mode_synchronization_20260403/](./tracks/dual_mode_synchronization_20260403/)*
 
 ---
+
+- [x] **Track: Actor Cache Optimization**
+  *Link: [./tracks/actor_cache_optimization_20260406/](./tracks/actor_cache_optimization_20260406/)*
+
+---
