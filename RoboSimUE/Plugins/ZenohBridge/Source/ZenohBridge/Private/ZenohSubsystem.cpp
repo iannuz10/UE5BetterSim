@@ -1,4 +1,6 @@
 #include "ZenohSubsystem.h"
+#include "ZenohWorkerThread.h"
+#include "HAL/RunnableThread.h"
 
 // ==========================================
 // SUBSYSTEM LIFECYCLE 
@@ -6,6 +8,12 @@
 void UZenohSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
+    
+    // We create a dummy backend or just pass null to the worker thread for now if we don't have a default session.
+    // Actually, the WorkerThread needs a Backend to Publish ACKs.
+    // We'll manage Backend creation within Connect(), but we need a persistent WorkerThread.
+    // Let's refine the architecture: The WorkerThread should be shared across ALL connections.
+    
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] Initialized. Ready for connections."));
 }
 
@@ -13,39 +21,24 @@ void UZenohSubsystem::Deinitialize()
 {
     // Cleanly shut down all background network threads when the game closes
     DisconnectAll();
+    
+    if (WorkerThreadHandle)
+    {
+        WorkerThread->Stop();
+        WorkerThreadHandle->WaitForCompletion();
+        delete WorkerThreadHandle;
+        WorkerThreadHandle = nullptr;
+    }
+    
+    if (WorkerThread)
+    {
+        delete WorkerThread;
+        WorkerThread = nullptr;
+    }
+
     TopicListeners.Empty();
     Super::Deinitialize();
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] Deinitialized. All connections closed."));
-}
-
-// ==========================================
-// FTICKABLE GAMEOBJECT INTERFACE
-// ==========================================
-void UZenohSubsystem::Tick(float DeltaTime)
-{
-    // Lock the map. If the background thread is currently adding a connection, 
-    // the GameThread will wait for a microsecond
-    FScopeLock Lock(&ConnectionMapLock);
-
-    for (auto& Pair : ActiveConnections)
-    {
-        FName ConnName = Pair.Key;
-        FZenohBackend* Backend = Pair.Value;
-
-        if (Backend)
-        {
-            FZenohMessage IncomingMessage;
-            while (Backend->MessageQueue.Dequeue(IncomingMessage))
-            {
-                HandleZenohMessage(ConnName, IncomingMessage.Topic, IncomingMessage.Payload);
-            }
-        }
-    }
-}
-
-TStatId UZenohSubsystem::GetStatId() const
-{
-    RETURN_QUICK_DECLARE_CYCLE_STAT(UZenohSubsystem, STATGROUP_Tickables);
 }
 
 // ==========================================
@@ -53,23 +46,31 @@ TStatId UZenohSubsystem::GetStatId() const
 // ==========================================
 bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
 {
-    // Clean up old connections safely (Disconnect already has its own lock inside it!)
+    // Clean up old connections safely
     Disconnect(ConnectionInfo.ConnectionName);
 
     // Prepare the connection strings
     FString ProtocolStr = (ConnectionInfo.Protocol == EZenohProtocol::TCP) ? TEXT("tcp") : TEXT("udp");
     FString Endpoint = FString::Printf(TEXT("%s/%s:%d"), *ProtocolStr, *ConnectionInfo.IPAddress, ConnectionInfo.Port);
-    FString ModeStr = (ConnectionInfo.ConnectionMode == EZenohMode::Client) ? TEXT("client") : TEXT("peer");
+    FString ModeStr = (ConnectionInfo.ConnectionMode == EZenohMode::Client) ? TEXT("client") : TEXT("peer");    
 
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] [%s] Connecting as %s to %s..."), *ConnectionInfo.ConnectionName.ToString(), *ModeStr, *Endpoint);
-    
-    // The background thread does the DNS and TCP handshake freely 
-    // Because no lock is held, the GameThread's Tick() can continue running and processing messages from existing connections without waiting for this potentially slow operation
+
     FZenohBackend* NewBackend = new FZenohBackend();
-    
+    NewBackend->ConnectionName = ConnectionInfo.ConnectionName;
+
+    // Start the worker thread if it's the first connection
+    if (!WorkerThread)
+    {
+        WorkerThread = new FZenohWorkerThread(NewBackend, this);
+        WorkerThreadHandle = FRunnableThread::Create(WorkerThread, TEXT("ZenohWorkerThread"), 0, TPri_AboveNormal);
+    }
+
+    // Set the worker thread on the backend so callbacks can push messages to it
+    NewBackend->SetWorkerThread(WorkerThread);
+
     if (NewBackend->Initialize(ModeStr, Endpoint))
     {
-        // SUCCESS! Now we lock the map for 1 microsecond just to add the connection.
         FScopeLock Lock(&ConnectionMapLock);
         ActiveConnections.Add(ConnectionInfo.ConnectionName, NewBackend);
 
@@ -82,7 +83,7 @@ bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
             }
             PendingSubscriptions.Remove(ConnectionInfo.ConnectionName);
         }
-        
+
         return true;
     }
     else
@@ -94,7 +95,6 @@ bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
 
 void UZenohSubsystem::Disconnect(FName ConnectionName)
 {
-    // Lock the map. Protect it while the background thread modifies it.
     FScopeLock Lock(&ConnectionMapLock);
 
     if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
@@ -102,9 +102,9 @@ void UZenohSubsystem::Disconnect(FName ConnectionName)
         if (*BackendPtr)
         {
             (*BackendPtr)->Shutdown();
-            delete *BackendPtr; 
+            delete *BackendPtr;
         }
-        
+
         ActiveConnections.Remove(ConnectionName);
         UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] Disconnected '%s'."), *ConnectionName.ToString());
     }
@@ -112,7 +112,6 @@ void UZenohSubsystem::Disconnect(FName ConnectionName)
 
 void UZenohSubsystem::DisconnectAll()
 {
-    // Lock the map.
     FScopeLock Lock(&ConnectionMapLock);
 
     for (auto& Pair : ActiveConnections)
@@ -138,18 +137,15 @@ bool UZenohSubsystem::IsConnected(FName ConnectionName) const
 
 UZenohTopicListener* UZenohSubsystem::SubscribeToTopic(FName ConnectionName, FString Topic)
 {
-    // Generate a unique key for this specific route (e.g., "Docker::sim/state")
     FString RoutingKey = ConnectionName.ToString() + TEXT("::") + Topic;
 
-    // 2. If a listener object doesn't exist yet, create it instantly so BP can bind to it.
     UZenohTopicListener* Listener = TopicListeners.FindRef(RoutingKey);
     if (!Listener)
     {
         Listener = NewObject<UZenohTopicListener>(this);
         TopicListeners.Add(RoutingKey, Listener);
     }
-    
-    // Tell the background thread to listen to the network
+
     FScopeLock Lock(&ConnectionMapLock);
     if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
     {
@@ -160,17 +156,10 @@ UZenohTopicListener* UZenohSubsystem::SubscribeToTopic(FName ConnectionName, FSt
     }
     else
     {
-        // The connection isn't ready yet. Store it in our back pocket.
         PendingSubscriptions.FindOrAdd(ConnectionName).AddUnique(Topic);
         UE_LOG(LogTemp, Log, TEXT("[Zenoh] Connection '%s' not ready. Deferring subscription to '%s'."), *ConnectionName.ToString(), *Topic);
     }
-    
-    // If a listener object already exists for this topic, just hand it back!
-    if (TopicListeners.Contains(RoutingKey))
-    {
-        return TopicListeners[RoutingKey];
-    }
-    
+
     return Listener;
 }
 
@@ -184,28 +173,32 @@ bool UZenohSubsystem::Publish(FName ConnectionName, FString Topic, FString Messa
             return (*BackendPtr)->Publish(Topic, Message);
         }
     }
-    
+
     UE_LOG(LogTemp, Warning, TEXT("[ZenohSubsystem] Ignored Publish: Connection '%s' not found!"), *ConnectionName.ToString());
     return false;
 }
 
+void UZenohSubsystem::ProcessCleanPayload(const FName& ConnectionName, const FString& Topic, const FString& Payload)
+{
+    // This is now called via AsyncTask on the Game Thread
+    HandleZenohMessage(ConnectionName, Topic, Payload);
+}
+
 void UZenohSubsystem::HandleZenohMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload)
 {
-    // GLOBAL FIREHOSE: Broadcast to anyone listening to everything (e.g., Debug UI)
+    // GLOBAL FIREHOSE
     if (OnGlobalMessageReceived.IsBound())
     {
         OnGlobalMessageReceived.Broadcast(ConnectionName, Topic, Payload);
     }
 
-    // SPECIFIC ROUTING: Reconstruct the Routing Key
+    // SPECIFIC ROUTING
     FString RoutingKey = ConnectionName.ToString() + TEXT("::") + Topic;
 
-    // High-speed O(1) Dictionary Lookup
     if (UZenohTopicListener** ListenerPtr = TopicListeners.Find(RoutingKey))
     {
         if (*ListenerPtr)
         {
-            // Only wake up the specific Blueprint that asked for this exact topic!
             (*ListenerPtr)->OnMessageReceived.Broadcast(Payload);
         }
     }

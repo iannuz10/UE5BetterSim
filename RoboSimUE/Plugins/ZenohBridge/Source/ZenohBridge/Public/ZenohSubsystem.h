@@ -2,9 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
-#include "Tickable.h" 
 #include "ZenohBackend.h"
 #include "ZenohSubsystem.generated.h"
+
+// Forward declaration
+class FZenohWorkerThread;
 
 // Enum configurations
 UENUM(BlueprintType)
@@ -57,28 +59,21 @@ public:
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnZenohGlobalMessage, const FName&, ConnectionName, const FString&, Topic, const FString&, Message);
 
 UCLASS()
-class ZENOHBRIDGE_API UZenohSubsystem : public UGameInstanceSubsystem, public FTickableGameObject
+class ZENOHBRIDGE_API UZenohSubsystem : public UGameInstanceSubsystem
 {
     GENERATED_BODY()
 
 public:
     // ==========================================
-    // SUBSYSTEM LIFECYCLE 
+    // SUBSYSTEM LIFECYCLE
     // ==========================================
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
 
     // ==========================================
-    // FTICKABLE GAMEOBJECT INTERFACE
-    // ==========================================
-    virtual void Tick(float DeltaTime) override;
-    virtual TStatId GetStatId() const override;
-    virtual bool IsTickable() const override { return !HasAnyFlags(RF_ClassDefaultObject); }
-
-    // ==========================================
     // LIFECYCLE CONTROL
     // ==========================================
-    
+
     // Pass a ConnectionInfo struct
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Connection")
     bool Connect(const FZenohConnectionInfo& ConnectionInfo);
@@ -88,14 +83,14 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Connection")
     void DisconnectAll();
-    
+
     UFUNCTION(BlueprintPure, Category = "Zenoh|Connection")
     bool IsConnected(FName ConnectionName) const;
 
     // ==========================================
     // MESSAGING
     // ==========================================
-    
+
     UFUNCTION(BlueprintCallable, Category = "Zenoh|Messaging")
     UZenohTopicListener* SubscribeToTopic(FName ConnectionName, FString Topic);
 
@@ -105,9 +100,14 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Zenoh|Messaging")
     FOnZenohGlobalMessage OnGlobalMessageReceived;
 
+    /** 
+     * Called from the background WorkerThread via AsyncTask to process clean payloads on the Game Thread.
+     */
+    void ProcessCleanPayload(const FName& ConnectionName, const FString& Topic, const FString& Payload);
+
 private:
     void HandleZenohMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload);
-    
+
     // Multi-connection dictionary
     // Maps a name (ex. "Docker") to its specific C++ backend instance.
     TMap<FName, FZenohBackend*> ActiveConnections;
@@ -115,10 +115,16 @@ private:
     // A Mutex Lock to prevent Background Threads and GameThreads from colliding
     mutable FCriticalSection ConnectionMapLock;
 
-    // Dictionary of Delegates for specific topics. This allows Blueprints to bind custom events to specific topics, instead of using the global OnMessageReceived delegate and filtering by topic manually.
+    // Dictionary of Delegates for specific topics.
     UPROPERTY()
     TMap<FString, UZenohTopicListener*> TopicListeners;
 
     // Stores subscriptions requested BEFORE a connection is fully established (The Race Condition Fix)
     TMap<FName, TArray<FString>> PendingSubscriptions;
+
+    /** Background worker for processing all incoming messages */
+    FZenohWorkerThread* WorkerThread = nullptr;
+
+    /** Reference to the runnable thread object */
+    FRunnableThread* WorkerThreadHandle = nullptr;
 };

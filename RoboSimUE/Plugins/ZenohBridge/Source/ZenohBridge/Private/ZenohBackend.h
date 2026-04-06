@@ -1,40 +1,36 @@
 #pragma once
 
-#include "Containers/Queue.h"
 #include "CoreMinimal.h"
 
-// Forward declaration allows hiding the struct
+// Forward declaration
 struct FZenohState;
-
-struct FZenohMessage
-{
-	FString Topic;
-	FString Payload;
-
-	// Default constructor
-	FZenohMessage() {}
-    
-	// Helper constructor to quickly create a message
-	FZenohMessage(const FString& InTopic, const FString& InPayload) 
-		: Topic(InTopic), Payload(InPayload) {}
-};
+class FZenohWorkerThread;
 
 class FZenohBackend
 {
 public:
-	FZenohBackend();
-	~FZenohBackend();
+    FZenohBackend();
+    ~FZenohBackend();
 
-	bool Initialize(const FString& Mode, const FString& Endpoint);
-	void Shutdown();
-	
-	bool Publish(const FString& Topic, const FString& Message);
-	void Subscribe(const FString& Topic);
-	
-	// Mpsc = Multiple Producers (Zenoh network threads), Single Consumer (Unreal GameThread)
-	TQueue<FZenohMessage, EQueueMode::Mpsc> MessageQueue;
-	
+    bool Initialize(const FString& Mode, const FString& Endpoint);
+    void Shutdown();
+
+    bool Publish(const FString& Topic, const FString& Message);
+    void Subscribe(const FString& Topic);
+
+    /** Sets the background worker thread for asynchronous message processing */
+    void SetWorkerThread(FZenohWorkerThread* InWorkerThread) { WorkerThread = InWorkerThread; }
+
+    /** 
+     * Internal pointer to the worker thread. 
+     * Public so the C-callback can access it directly for speed.
+     */
+    FZenohWorkerThread* WorkerThread = nullptr;
+
+    /** The identifier for this connection, used for routing messages back to the subsystem */
+    FName ConnectionName;
+
 private:
-	// This pointer hides ALL Zenoh data from Unreal
-	FZenohState* State = nullptr;
+    /** This pointer hides ALL Zenoh data from Unreal */
+    FZenohState* State = nullptr;
 };

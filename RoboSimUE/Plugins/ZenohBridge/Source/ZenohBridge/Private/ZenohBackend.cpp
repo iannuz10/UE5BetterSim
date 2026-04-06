@@ -1,7 +1,8 @@
 #include "ZenohBackend.h"
+#include "ZenohWorkerThread.h"
 #include "Containers/StringConv.h"
 #include "Async/Async.h"
-#include "String"
+#include <string>
 
 // --- SAFE MACRO MANAGEMENT ---
 
@@ -12,7 +13,7 @@
 
 // Disable Warnings (Common for both)
 #pragma warning(push)
-#pragma warning(disable: 4191) 
+#pragma warning(disable: 4191)
 #pragma warning(disable: 4005)
 
 // Handle ALIGN conflict
@@ -23,7 +24,7 @@
 #endif
 
 // Include Zenoh
-#include "zenoh.h" 
+#include "zenoh.h"
 
 // Restore ALIGN
 #ifdef ALIGN
@@ -49,8 +50,8 @@
 // This struct lives ONLY inside this .cpp file
 struct FZenohState
 {
-    struct z_owned_session_t Session;
-    struct z_owned_subscriber_t Subscriber;
+    z_owned_session_t Session;
+    z_owned_subscriber_t Subscriber;
     bool bInitialized = false;
 };
 
@@ -59,7 +60,7 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
 {
     if (!sample || !context) return;
 
-    // Extract the Topic 
+    // Extract the Topic
     z_view_string_t key_string;
     z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key_string);
     const char* topic_data = z_string_data(z_loan(key_string));
@@ -67,7 +68,7 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
     FUTF8ToTCHAR TopicConverter(topic_data, (int32)topic_len);
     FString Topic(TopicConverter.Length(), TopicConverter.Get());
 
-    // Extract the Payload 
+    // Extract the Payload
     z_owned_string_t payload_string;
     z_bytes_to_string(z_sample_payload(sample), &payload_string);
     const char* data = z_string_data(z_loan(payload_string));
@@ -80,12 +81,11 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
 
     // Cast the context directly to Backend class
     auto* Backend = static_cast<FZenohBackend*>(context);
-    if (Backend)
+    if (Backend && Backend->WorkerThread)
     {
-        Backend->MessageQueue.Enqueue(FZenohMessage(Topic, Msg));
+        Backend->WorkerThread->EnqueueMessage(Backend->ConnectionName, Topic, Msg);
     }
 }
-
 FZenohBackend::FZenohBackend()
 {
     State = new FZenohState();
