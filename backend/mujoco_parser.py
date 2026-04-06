@@ -12,8 +12,9 @@ from engine_manager import PhysicsEngine
 # ==========================================
 ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
+STOP_TOPIC = "sim/control/stop"
 FPS = 60
-SUBSTEPS = 2
+SUBSTEPS = 8
 
 # Telemetry setup
 logging.basicConfig(
@@ -32,6 +33,7 @@ class SimulationController:
         self.bridge = None
         self.dynamic_props = []
         self._is_ready = False
+        self._is_running = True
 
     def connect_zenoh(self, endpoint):
         logger.info(f"Connecting to Zenoh at {endpoint}...")
@@ -62,6 +64,11 @@ class SimulationController:
             self.bridge.build_joint_manifest(self.engine.model)
             self._is_ready = True
 
+    def on_stop(self, sample):
+        """Zenoh callback for simulation stop."""
+        logger.info("Received STOP signal from Unreal Engine. Shutting down...")
+        self._is_running = False
+
     def run(self):
         """Main simulation loop."""
         if not self.connect_zenoh(ZENOH_ENDPOINT):
@@ -74,12 +81,15 @@ class SimulationController:
             time.sleep(0.1)
         sub.undeclare()
 
+        # Listen for stop signal
+        stop_sub = self.bridge.session.declare_subscriber(STOP_TOPIC, self.on_stop)
+
         logger.info(f"Starting physics loop at {FPS}Hz...")
         frame_time = 1.0 / FPS
         frame_count = 0
 
         try:
-            while True:
+            while self._is_running:
                 start_tick = time.perf_counter()
 
                 # 1. Physics
@@ -102,6 +112,15 @@ class SimulationController:
             logger.info("Simulation stopped by user.")
         except Exception as e:
             logger.critical(f"Runtime crash: {e}")
+        finally:
+            if 'stop_sub' in locals():
+                stop_sub.undeclare()
+            
+            if self.bridge and self.bridge.session:
+                logger.info("Closing Zenoh session...")
+                self.bridge.session.close()
+
+            logger.info("Simulation loop exited cleanly.")
 
 if __name__ == "__main__":
     controller = SimulationController()
