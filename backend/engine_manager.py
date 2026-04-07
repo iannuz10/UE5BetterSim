@@ -29,12 +29,27 @@ class PhysicsEngine:
             logger.critical(f"MuJoCo Compile Error: {e}")
             return False
 
-    def step(self, substeps=8):
-        """Advances the simulation by N substeps."""
+    def get_optimal_substeps(self, target_fps):
+        """Calculates the number of substeps needed to match the target frequency."""
+        if not self._is_ready:
+            return 1
+        
+        # substeps = (1.0 / target_fps) / model.opt.timestep
+        timestep = self.model.opt.timestep
+        substeps = max(1, int(round((1.0 / target_fps) / timestep)))
+        logger.info(f"Dynamic Timestep: target={target_fps}Hz, timestep={timestep}s -> substeps={substeps}")
+        return substeps
+
+    def step(self, substeps=None):
+        """Advances the simulation by N substeps. Defaults to 8 if not specified."""
         if not self._is_ready:
             return
         
-        for _ in range(substeps):
+        # If substeps is not provided, we fallback to a safe default of 8
+        # but the caller should ideally provide the calculated value.
+        n_steps = substeps if substeps is not None else 8
+        
+        for _ in range(n_steps):
             mujoco.mj_step(self.model, self.data)
 
     def is_ready(self):

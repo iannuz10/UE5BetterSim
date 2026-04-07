@@ -14,7 +14,6 @@ ZENOH_ENDPOINT = "tcp/host.docker.internal:7447"
 INIT_TOPIC = "sim/world/init"
 STOP_TOPIC = "sim/control/stop"
 FPS = 60
-SUBSTEPS = 8
 
 # Telemetry setup
 logging.basicConfig(
@@ -28,7 +27,7 @@ logger = logging.getLogger("MuJoCo_Core")
 
 class SimulationController:
     def __init__(self):
-        self.telemetry = TelemetryManager(threshold_ms=3.0)
+        self.telemetry = TelemetryManager(threshold_ms=4.0)
         self.engine = PhysicsEngine()
         self.bridge = None
         self.dynamic_props = []
@@ -84,7 +83,10 @@ class SimulationController:
         # Listen for stop signal
         stop_sub = self.bridge.session.declare_subscriber(STOP_TOPIC, self.on_stop)
 
-        logger.info(f"Starting physics loop at {FPS}Hz...")
+        # Calculate optimal substeps once model is loaded
+        substeps = self.engine.get_optimal_substeps(FPS)
+
+        logger.info(f"Starting physics loop at {FPS}Hz (substeps={substeps})...")
         frame_time = 1.0 / FPS
         frame_count = 0
 
@@ -93,7 +95,7 @@ class SimulationController:
                 start_tick = time.perf_counter()
 
                 # 1. Physics
-                self.engine.step(substeps=SUBSTEPS)
+                self.engine.step(substeps=substeps)
 
                 # 2. Bridge
                 self.bridge.publish_state(self.engine.model, self.engine.data, self.dynamic_props)
