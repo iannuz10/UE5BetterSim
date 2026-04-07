@@ -93,16 +93,15 @@ class BridgeManager:
         agent_payloads = {}
         has_world_updates = False
 
-        # 1. PROPS (Batch Processing Candidate)
-        # Note: For small counts, name lookup is fine. For large counts, we use our cached IDs.
+        # 1. PROPS (Optimized)
         for name, b_id in self._prop_ids.items():
             mj_pos = data.xpos[b_id]
             mj_quat = data.xquat[b_id]
 
-            # MuJoCo (RH) -> UE5 (LH) + Meters to CM (Vectorized Logic)
-            ue_pos = (mj_pos * self.UE_POS_CONVERSION).tolist()
-            # [w, x, y, z] -> [-x, y, -z, w]
-            ue_quat = [mj_quat[1] * -1.0, mj_quat[2], mj_quat[3] * -1.0, mj_quat[0]]
+            # Vectorized coordinate transform: RH -> LH, Meters -> CM
+            ue_pos = mj_pos * self.UE_POS_CONVERSION
+            # [w, x, y, z] -> [x, y, z, w] reordering then LH flip [-x, y, -z, w]
+            ue_quat = mj_quat[[1, 2, 3, 0]] * self.UE_QUAT_CONVERSION
 
             if self._check_movement(name, ue_pos, ue_quat):
                 world_payload["objects"].append({"name": name, "pos": ue_pos, "quat": ue_quat})
@@ -114,9 +113,9 @@ class BridgeManager:
             mj_pos = data.xpos[b_id]
             mj_quat = data.xquat[b_id]
 
-            # MuJoCo (RH) -> UE5 (LH) + Meters to CM
-            ue_pos = (mj_pos * self.UE_POS_CONVERSION).tolist()
-            ue_quat = [mj_quat[1] * -1.0, mj_quat[2], mj_quat[3] * -1.0, mj_quat[0]]
+            # Vectorized coordinate transform
+            ue_pos = mj_pos * self.UE_POS_CONVERSION
+            ue_quat = mj_quat[[1, 2, 3, 0]] * self.UE_QUAT_CONVERSION
 
             root_body_name = f"{agent_name}__root"
             if self._check_movement(root_body_name, ue_pos, ue_quat):
