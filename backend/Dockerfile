@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
 # - eclipse-zenoh: The CORRECT package name for Zenoh
 # - mujoco: Physics engine
 # - pinocchio: Robot math library
-RUN pip3 install eclipse-zenoh mujoco pinocchio numpy
+RUN pip3 install eclipse-zenoh mujoco pinocchio numpy orjson
 
 # Set work directory
 WORKDIR /app
