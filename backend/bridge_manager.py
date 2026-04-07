@@ -1,5 +1,5 @@
 import zenoh
-import json
+import orjson
 import time
 import mujoco
 import numpy as np
@@ -25,7 +25,12 @@ class BridgeManager:
 
         # Joint Manifest: {jnt_index: agent_name}
         self._joint_agent_manifest = {}
-        self._mobile_agents = {}
+        self._mobile_agents = {} # {agent_name: root_body_id}
+        self._prop_ids = {}      # {prop_name: body_id}
+
+        # Vectorized constants
+        self.UE_POS_CONVERSION = np.array([100.0, -100.0, 100.0], dtype=np.float32)
+        self.UE_QUAT_CONVERSION = np.array([-1.0, 1.0, -1.0, 1.0], dtype=np.float32)
 
         # Delta thresholds to prevent network spam
         self.POS_TOLERANCE = 0.001
@@ -39,18 +44,20 @@ class BridgeManager:
 
     def build_joint_manifest(self, model):
         """One-time scan of the model to map all joints to their parent agent bodies."""
-        logger.info("Building Joint Manifest...")
+        logger.info("Building Joint Manifest and Body ID cache...")
         self._joint_agent_manifest.clear()
         self._mobile_agents.clear()
 
+        # 1. Identify Mobile Agents and their root bodies
         for j in range(model.njnt):
             if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
                 body_id = model.jnt_bodyid[j]
                 b_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
                 if b_name and b_name.endswith("__root"):
                     agent_name = b_name.replace("__root", "")
-                    self._mobile_agents[agent_name] = b_name
+                    self._mobile_agents[agent_name] = body_id
 
+        # 2. Map Joints to Agents via hierarchy traversal
         for j in range(model.njnt):
             jnt_type = model.jnt_type[j]
             if jnt_type not in [mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE]:
@@ -77,18 +84,25 @@ class BridgeManager:
 
     def publish_state(self, model, data, dynamic_props):
         """Extracts physics state and pushes to Zenoh (Envelope Split Architecture)."""
+        # Ensure prop ID cache is warm
+        if not self._prop_ids and dynamic_props:
+            for name in dynamic_props:
+                self._prop_ids[name] = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+
         world_payload = {"objects": []}
         agent_payloads = {}
         has_world_updates = False
 
-        # 1. PROPS
-        for name in dynamic_props:
-            mj_pos = data.body(name).xpos
-            mj_quat = data.body(name).xquat
+        # 1. PROPS (Batch Processing Candidate)
+        # Note: For small counts, name lookup is fine. For large counts, we use our cached IDs.
+        for name, b_id in self._prop_ids.items():
+            mj_pos = data.xpos[b_id]
+            mj_quat = data.xquat[b_id]
 
-            # MuJoCo (RH) -> UE5 (LH) + Meters to CM
-            ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
-            ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
+            # MuJoCo (RH) -> UE5 (LH) + Meters to CM (Vectorized Logic)
+            ue_pos = (mj_pos * self.UE_POS_CONVERSION).tolist()
+            # [w, x, y, z] -> [-x, y, -z, w]
+            ue_quat = [mj_quat[1] * -1.0, mj_quat[2], mj_quat[3] * -1.0, mj_quat[0]]
 
             if self._check_movement(name, ue_pos, ue_quat):
                 world_payload["objects"].append({"name": name, "pos": ue_pos, "quat": ue_quat})
@@ -96,14 +110,15 @@ class BridgeManager:
                 has_world_updates = True
 
         # 2. AGENT ROOTS
-        for agent_name, root_body_name in self._mobile_agents.items():
-            mj_pos = data.body(root_body_name).xpos
-            mj_quat = data.body(root_body_name).xquat
+        for agent_name, b_id in self._mobile_agents.items():
+            mj_pos = data.xpos[b_id]
+            mj_quat = data.xquat[b_id]
 
             # MuJoCo (RH) -> UE5 (LH) + Meters to CM
-            ue_pos = [mj_pos[0] * 100.0, mj_pos[1] * -100.0, mj_pos[2] * 100.0]
-            ue_quat = [-mj_quat[1], mj_quat[2], -mj_quat[3], mj_quat[0]]
+            ue_pos = (mj_pos * self.UE_POS_CONVERSION).tolist()
+            ue_quat = [mj_quat[1] * -1.0, mj_quat[2], mj_quat[3] * -1.0, mj_quat[0]]
 
+            root_body_name = f"{agent_name}__root"
             if self._check_movement(root_body_name, ue_pos, ue_quat):
                 if agent_name not in agent_payloads:
                     agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
@@ -116,12 +131,12 @@ class BridgeManager:
             val = float(data.qpos[model.jnt_qposadr[j]])
             state_key = f"jnt_{jnt_name_full}"
 
+            # Only publish if delta > threshold
             if state_key not in self.last_state or abs(val - self.last_state[state_key]) >= 0.001:
                 if agent_name not in agent_payloads:
                     agent_payloads[agent_name] = {"joints": {"hinge": {}, "slide": {}}}
 
-                # Strip the agent prefix from the joint name to reduce payload size
-                # The world_builder prepends '{agent_name}_' to all joints.
+                # Strip the agent prefix from the joint name
                 prefix = f"{agent_name}_"
                 jnt_name = jnt_name_full[len(prefix):] if jnt_name_full.startswith(prefix) else jnt_name_full   
 
@@ -133,11 +148,12 @@ class BridgeManager:
 
                 self.last_state[state_key] = val
 
-        # 3. TRANSMIT (Envelope Split Architecture)
+        # 4. TRANSMIT (Envelope Split Architecture with orjson)
         if has_world_updates:
-            json_string = "{}" if self.TEST_GHOST_PAYLOAD else json.dumps(world_payload)
+            # orjson.dumps returns bytes. OPT_SERIALIZE_NUMPY handles any residual numpy types.
+            bin_payload = b"{}" if self.TEST_GHOST_PAYLOAD else orjson.dumps(world_payload, option=orjson.OPT_SERIALIZE_NUMPY)
             ack_topic = f"{self.ACK_TOPIC_PREFIX}/world"
-            envelope = f"{ack_topic}:{self._msg_counter}|{json_string}"
+            envelope = f"{ack_topic}:{self._msg_counter}|".encode() + bin_payload
 
             self.telemetry.register_message(self._msg_counter, "world")
             self._msg_counter += 1
@@ -147,9 +163,9 @@ class BridgeManager:
             if agent_name not in self.agent_pubs:
                 self._setup_agent_channel(agent_name)
 
-            json_string = "{}" if self.TEST_GHOST_PAYLOAD else json.dumps(payload)
+            bin_payload = b"{}" if self.TEST_GHOST_PAYLOAD else orjson.dumps(payload, option=orjson.OPT_SERIALIZE_NUMPY)
             ack_topic = f"{self.ACK_TOPIC_PREFIX}/{agent_name}"
-            envelope = f"{ack_topic}:{self._msg_counter}|{json_string}"
+            envelope = f"{ack_topic}:{self._msg_counter}|".encode() + bin_payload
 
             self.telemetry.register_message(self._msg_counter, agent_name)
             self._msg_counter += 1

@@ -1,5 +1,5 @@
 import zenoh
-import json
+import orjson
 import time
 import logging
 from world_builder import WorldBuilder
@@ -17,9 +17,9 @@ FPS = 60
 
 # Telemetry setup
 logging.basicConfig(
-    filename='mujoco_run.log', 
-    filemode='w', 
-    level=logging.DEBUG, 
+    filename='mujoco_run.log',
+    filemode='w',
+    level=logging.DEBUG,
     format='[%(asctime)s] [%(levelname)s] %(message)s',
     datefmt='%H:%M:%S'
 )
@@ -51,8 +51,8 @@ class SimulationController:
         """Zenoh callback for world initialization."""
         logger.info("Received INIT payload from Unreal Engine.")
         try:
-            payload = json.loads(sample.payload.to_string())
-        except json.JSONDecodeError as e:
+            payload = orjson.loads(sample.payload.to_string())
+        except orjson.JSONDecodeError as e:
             logger.critical(f"Malformed INIT JSON: {e}")
             return
 
@@ -62,7 +62,6 @@ class SimulationController:
         if self.engine.load_model(xml_str):
             self.bridge.build_joint_manifest(self.engine.model)
             self._is_ready = True
-
     def on_stop(self, sample):
         """Zenoh callback for simulation stop."""
         logger.info("Received STOP signal from Unreal Engine. Shutting down...")
