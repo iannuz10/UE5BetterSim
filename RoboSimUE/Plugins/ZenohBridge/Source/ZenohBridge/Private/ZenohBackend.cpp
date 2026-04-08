@@ -1,5 +1,6 @@
 #include "ZenohBackend.h"
 #include "ZenohWorkerThread.h"
+#include "ZenohSubsystem.h"
 #include "Containers/StringConv.h"
 #include "Async/Async.h"
 #include <string>
@@ -93,21 +94,27 @@ FZenohBackend::FZenohBackend()
 
 FZenohBackend::~FZenohBackend()
 {
+    Shutdown();
+    
     if (State)
     {
-        // z_close tells Zenoh to sever the connection and stop all background threads.
-        // This guarantees the C-thread will never touch our deleted MessageQueue!
-        z_close(z_session_loan_mut(&State->Session), NULL);
-        
         delete State;
         State = nullptr;
     }
 }
 
-bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
+bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint, UZenohSubsystem* InSubsystem)
 {
-    State = new FZenohState();
+    if (!State)
+    {
+        State = new FZenohState();
+    }
     
+    // --- CREATE THE ISOLATED PIPELINE ---
+    WorkerThread = new FZenohWorkerThread(this, InSubsystem);
+    FString ThreadName = FString::Printf(TEXT("ZenohWorker_%s"), *ConnectionName.ToString());
+    WorkerThreadHandle = FRunnableThread::Create(WorkerThread, *ThreadName, 0, TPri_AboveNormal);
+
     // Convert Unreal Strings to standard C strings
     std::string StdMode = std::string(TCHAR_TO_UTF8(*Mode));
     std::string StdEndpoint = std::string(TCHAR_TO_UTF8(*Endpoint));
@@ -135,11 +142,29 @@ bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint)
         return false;
     }
 
+    State->bInitialized = true;
+
     return true;
 }
 
 void FZenohBackend::Shutdown()
 {
+    // 1. Clean up the thread FIRST so it stops processing
+    if (WorkerThreadHandle)
+    {
+        WorkerThread->Stop();
+        WorkerThreadHandle->WaitForCompletion();
+        delete WorkerThreadHandle;
+        WorkerThreadHandle = nullptr;
+    }
+
+    if (WorkerThread)
+    {
+        delete WorkerThread;
+        WorkerThread = nullptr;
+    }
+
+    // 2. Clean up Zenoh session
     if (State && State->bInitialized)
     {
         // Close Session

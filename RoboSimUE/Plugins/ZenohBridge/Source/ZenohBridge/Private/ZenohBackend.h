@@ -5,6 +5,8 @@
 // Forward declaration
 struct FZenohState;
 class FZenohWorkerThread;
+class FRunnableThread;
+class UZenohSubsystem;
 
 class FZenohBackend
 {
@@ -12,14 +14,11 @@ public:
     FZenohBackend();
     ~FZenohBackend();
 
-    bool Initialize(const FString& Mode, const FString& Endpoint);
+    bool Initialize(const FString& Mode, const FString& Endpoint, UZenohSubsystem* InSubsystem);
     void Shutdown();
 
     bool Publish(const FString& Topic, const FString& Message);
     void Subscribe(const FString& Topic);
-
-    /** Sets the background worker thread for asynchronous message processing */
-    void SetWorkerThread(FZenohWorkerThread* InWorkerThread) { WorkerThread = InWorkerThread; }
 
     /** 
      * Internal pointer to the worker thread. 
@@ -33,4 +32,7 @@ public:
 private:
     /** This pointer hides ALL Zenoh data from Unreal */
     FZenohState* State = nullptr;
+
+    /** Thread lifecycle manager */
+    FRunnableThread* WorkerThreadHandle = nullptr;
 };

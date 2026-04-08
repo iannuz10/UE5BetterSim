@@ -110,7 +110,7 @@ private:
 
     // Multi-connection dictionary
     // Maps a name (ex. "Docker") to its specific C++ backend instance.
-    TMap<FName, FZenohBackend*> ActiveConnections;
+    TMap<FName, TUniquePtr<FZenohBackend>> ActiveConnections;
 
     // A Mutex Lock to prevent Background Threads and GameThreads from colliding
     mutable FCriticalSection ConnectionMapLock;
@@ -121,10 +121,4 @@ private:
 
     // Stores subscriptions requested BEFORE a connection is fully established (The Race Condition Fix)
     TMap<FName, TArray<FString>> PendingSubscriptions;
-
-    /** Background worker for processing all incoming messages */
-    FZenohWorkerThread* WorkerThread = nullptr;
-
-    /** Reference to the runnable thread object */
-    FRunnableThread* WorkerThreadHandle = nullptr;
 };

@@ -9,11 +9,6 @@ void UZenohSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
     
-    // We create a dummy backend or just pass null to the worker thread for now if we don't have a default session.
-    // Actually, the WorkerThread needs a Backend to Publish ACKs.
-    // We'll manage Backend creation within Connect(), but we need a persistent WorkerThread.
-    // Let's refine the architecture: The WorkerThread should be shared across ALL connections.
-    
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] Initialized. Ready for connections."));
 }
 
@@ -22,20 +17,6 @@ void UZenohSubsystem::Deinitialize()
     // Cleanly shut down all background network threads when the game closes
     DisconnectAll();
     
-    if (WorkerThreadHandle)
-    {
-        WorkerThread->Stop();
-        WorkerThreadHandle->WaitForCompletion();
-        delete WorkerThreadHandle;
-        WorkerThreadHandle = nullptr;
-    }
-    
-    if (WorkerThread)
-    {
-        delete WorkerThread;
-        WorkerThread = nullptr;
-    }
-
     TopicListeners.Empty();
     Super::Deinitialize();
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] Deinitialized. All connections closed."));
@@ -56,30 +37,20 @@ bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
 
     UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] [%s] Connecting as %s to %s..."), *ConnectionInfo.ConnectionName.ToString(), *ModeStr, *Endpoint);
 
-    FZenohBackend* NewBackend = new FZenohBackend();
+    TUniquePtr<FZenohBackend> NewBackend = MakeUnique<FZenohBackend>();
     NewBackend->ConnectionName = ConnectionInfo.ConnectionName;
 
-    // Start the worker thread if it's the first connection
-    if (!WorkerThread)
-    {
-        WorkerThread = new FZenohWorkerThread(NewBackend, this);
-        WorkerThreadHandle = FRunnableThread::Create(WorkerThread, TEXT("ZenohWorkerThread"), 0, TPri_AboveNormal);
-    }
-
-    // Set the worker thread on the backend so callbacks can push messages to it
-    NewBackend->SetWorkerThread(WorkerThread);
-
-    if (NewBackend->Initialize(ModeStr, Endpoint))
+    if (NewBackend->Initialize(ModeStr, Endpoint, this))
     {
         FScopeLock Lock(&ConnectionMapLock);
-        ActiveConnections.Add(ConnectionInfo.ConnectionName, NewBackend);
+        ActiveConnections.Emplace(ConnectionInfo.ConnectionName, MoveTemp(NewBackend));
 
         // The connection is now online. Flush any deferred subscriptions.
         if (TArray<FString>* PendingTopics = PendingSubscriptions.Find(ConnectionInfo.ConnectionName))
         {
             for (const FString& PendingTopic : *PendingTopics)
             {
-                NewBackend->Subscribe(PendingTopic);
+                ActiveConnections[ConnectionInfo.ConnectionName]->Subscribe(PendingTopic);
             }
             PendingSubscriptions.Remove(ConnectionInfo.ConnectionName);
         }
@@ -88,7 +59,6 @@ bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
     }
     else
     {
-        delete NewBackend;
         return false;
     }
 }
@@ -97,14 +67,12 @@ void UZenohSubsystem::Disconnect(FName ConnectionName)
 {
     FScopeLock Lock(&ConnectionMapLock);
 
-    if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
+    if (TUniquePtr<FZenohBackend>* BackendPtr = ActiveConnections.Find(ConnectionName))
     {
-        if (*BackendPtr)
+        if (BackendPtr->IsValid())
         {
             (*BackendPtr)->Shutdown();
-            delete *BackendPtr;
         }
-
         ActiveConnections.Remove(ConnectionName);
         UE_LOG(LogTemp, Log, TEXT("[ZenohSubsystem] Disconnected '%s'."), *ConnectionName.ToString());
     }
@@ -116,10 +84,9 @@ void UZenohSubsystem::DisconnectAll()
 
     for (auto& Pair : ActiveConnections)
     {
-        if (Pair.Value)
+        if (Pair.Value.IsValid())
         {
             Pair.Value->Shutdown();
-            delete Pair.Value;
         }
     }
     ActiveConnections.Empty();
@@ -147,9 +114,9 @@ UZenohTopicListener* UZenohSubsystem::SubscribeToTopic(FName ConnectionName, FSt
     }
 
     FScopeLock Lock(&ConnectionMapLock);
-    if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
+    if (TUniquePtr<FZenohBackend>* BackendPtr = ActiveConnections.Find(ConnectionName))
     {
-        if (*BackendPtr)
+        if (BackendPtr->IsValid())
         {
             (*BackendPtr)->Subscribe(Topic);
         }
@@ -166,9 +133,9 @@ UZenohTopicListener* UZenohSubsystem::SubscribeToTopic(FName ConnectionName, FSt
 bool UZenohSubsystem::Publish(FName ConnectionName, FString Topic, FString Message)
 {
     FScopeLock Lock(&ConnectionMapLock);
-    if (FZenohBackend** BackendPtr = ActiveConnections.Find(ConnectionName))
+    if (TUniquePtr<FZenohBackend>* BackendPtr = ActiveConnections.Find(ConnectionName))
     {
-        if (*BackendPtr)
+        if (BackendPtr->IsValid())
         {
             return (*BackendPtr)->Publish(Topic, Message);
         }
