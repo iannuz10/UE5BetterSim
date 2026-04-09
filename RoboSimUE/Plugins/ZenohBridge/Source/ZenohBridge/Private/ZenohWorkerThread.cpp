@@ -2,110 +2,101 @@
 #include "ZenohBackend.h"
 #include "ZenohSubsystem.h"
 #include "Async/Async.h"
+#include "Serialization/JsonSerializer.h"
+#include "Dom/JsonObject.h"
 
 FZenohWorkerThread::FZenohWorkerThread(FZenohBackend* InBackend, TWeakObjectPtr<UZenohSubsystem> InSubsystem)
-    : Backend(InBackend)
-    , Subsystem(InSubsystem)
-    , bStopThread(false)
+    : Backend(InBackend), Subsystem(InSubsystem), bStopThread(false)
 {
-    Semaphore = FGenericPlatformProcess::GetSynchEventFromPool(false);
 }
 
 FZenohWorkerThread::~FZenohWorkerThread()
 {
-    if (Semaphore)
-    {
-        FGenericPlatformProcess::ReturnSynchEventToPool(Semaphore);
-        Semaphore = nullptr;
-    }
 }
 
 bool FZenohWorkerThread::Init()
 {
-    return (Backend != nullptr && Semaphore != nullptr);
+    return (Backend != nullptr);
 }
 
 uint32 FZenohWorkerThread::Run()
 {
+    // We leave this alive just so the FRunnable doesn't crash, 
+    // but we let it sleep peacefully. It no longer handles the data.
     while (!bStopThread)
     {
-        // Wait for messages or stop signal
-        Semaphore->Wait(FTimespan::FromMilliseconds(100));
-
-        if (bStopThread) break;
-
-        FRawMessage Incoming;
-        while (RawNetworkQueue.Dequeue(Incoming))
-        {
-            const FName& ConnName = Incoming.ConnectionName;
-            const FString& Topic = Incoming.Topic;
-            const FString& Payload = Incoming.Payload;
-
-            FString Header;
-            FString CleanPayload;
-
-            // Envelope parsing: [AckTopic:MsgId]|[JsonPayload]
-            if (Payload.Split(TEXT("|"), &Header, &CleanPayload))
-            {
-                FString AckTopic;
-                FString MsgId;
-
-                // Sub-split Header: [AckTopic]:[MsgId]
-                if (Header.Split(TEXT(":"), &AckTopic, &MsgId))
-                {
-                    // Immediate ACK on the background thread using the provided topic
-                    if (Backend)
-                    {
-                        Backend->Publish(AckTopic, MsgId);
-                    }
-                }
-                else
-                {
-                    // Fallback for messages with '|' but no ':'
-                    // Header might be just the MsgId
-                    if (Backend)
-                    {
-                        Backend->Publish(TEXT("sim/latency/ack"), Header);
-                    }
-                }
-            }
-            else
-            {
-                CleanPayload = Payload;
-            }
-
-            // Dispatch to Game Thread
-            AsyncTask(ENamedThreads::GameThread, [WeakSubsystem = Subsystem, ConnName, Topic, CleanPayload]()
-            {
-                if (WeakSubsystem.IsValid())
-                {
-                    WeakSubsystem->ProcessCleanPayload(ConnName, Topic, CleanPayload);
-                }
-            });
-        }
+        FPlatformProcess::Sleep(0.1f); 
     }
-
     return 0;
 }
 
 void FZenohWorkerThread::Stop()
 {
     bStopThread = true;
-    if (Semaphore)
-    {
-        Semaphore->Trigger();
-    }
 }
 
 void FZenohWorkerThread::Exit()
 {
 }
 
+// ---------------------------------------------------------
+// HELPER FUNCTION 
+// ---------------------------------------------------------
+void FZenohWorkerThread::ParseAndDispatch(TWeakObjectPtr<UZenohSubsystem> WeakSubsystem, const FName& ConnName, const FString& Topic, int64 MsgId, const FString& JsonString)
+{
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+
+    if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
+    {
+        // Always apply physics on the Game Thread
+        AsyncTask(ENamedThreads::GameThread, [WeakSubsystem, ConnName, Topic, MsgId, JsonObject]()
+        {
+            if (WeakSubsystem.IsValid())
+            {
+                WeakSubsystem->ProcessParsedPayload(ConnName, Topic, MsgId, JsonObject);
+            }
+        });
+    }
+}
+
+// ---------------------------------------------------------
+// THE SMART ROUTER (Your new EnqueueMessage)
+// ---------------------------------------------------------
 void FZenohWorkerThread::EnqueueMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload)
 {
-    RawNetworkQueue.Enqueue(FRawMessage(ConnectionName, Topic, Payload));
-    if (Semaphore)
+    int64 MsgIdInt = -1;
+    int32 SplitIndex = INDEX_NONE;
+
+    // INSTANT ACK (Always fast, regardless of path)
+    if (Payload.FindChar('|', SplitIndex))
     {
-        Semaphore->Trigger();
+        FString Header = Payload.Left(SplitIndex);
+        FString AckTopic, MsgIdStr;
+
+        if (Header.Split(TEXT(":"), &AckTopic, &MsgIdStr))
+        {
+            if (Backend) Backend->Publish(AckTopic, MsgIdStr);
+            MsgIdInt = FCString::Atoi64(*MsgIdStr);
+        }
+    }
+
+    FString CleanPayload = (SplitIndex != INDEX_NONE) ? Payload.Mid(SplitIndex + 1) : Payload;
+
+    // SMART SWITCH
+    if (bUseAsyncParsing)
+    {
+        // MASSIVE SCENES (10+ Robots (or topics))
+        // Throws the work to the background cores to prevent network blocking
+        Async(EAsyncExecution::ThreadPool, [WeakSubsystem = Subsystem, ConnName = ConnectionName, Topic, MsgIdInt, CleanPayload]()
+        {
+            ParseAndDispatch(WeakSubsystem, ConnName, Topic, MsgIdInt, CleanPayload);
+        });
+    }
+    else
+    {
+        // TINY SCENES (1-4 Robots)
+        // Parses immediately on the network thread for < 2ms latency
+        ParseAndDispatch(Subsystem, ConnectionName, Topic, MsgIdInt, CleanPayload);
     }
 }

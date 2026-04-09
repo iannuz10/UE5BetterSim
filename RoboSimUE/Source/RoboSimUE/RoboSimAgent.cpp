@@ -2,6 +2,10 @@
 #include "SceneExporter.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "ZenohSubsystem.h"
+#include "Engine/GameInstance.h"
+
+TSet<FString> ARoboSimAgent::GlobalRobotIDs;
 
 ARoboSimAgent::ARoboSimAgent()
 {
@@ -13,6 +17,69 @@ ARoboSimAgent::ARoboSimAgent()
 void ARoboSimAgent::BeginPlay()
 {
     Super::BeginPlay();
+
+    // ID Registration Logic
+    if (RobotID.IsEmpty())
+    {
+        RegisteredRobotID = GetName();
+    }
+    else if (GlobalRobotIDs.Contains(RobotID))
+    {
+        USceneExporter::WriteSimulationLog(TEXT("WARN"), FString::Printf(TEXT("RobotID '%s' is already in use. Falling back to unique name: '%s'"), *RobotID, *GetName()));
+        RegisteredRobotID = GetName();
+    }
+    else
+    {
+        RegisteredRobotID = RobotID;
+    }
+
+    GlobalRobotIDs.Add(RegisteredRobotID);
+
+    // Zenoh Subscription
+    FString StateTopic = FString::Printf(TEXT("sim/agent/%s/state"), *RegisteredRobotID);
+
+    if (UGameInstance* GameInstance = GetGameInstance())
+    {
+        if (UZenohSubsystem* ZenohSubsystem = GameInstance->GetSubsystem<UZenohSubsystem>())
+        {
+            UZenohTopicListener* Listener = ZenohSubsystem->SubscribeToTopic(ConnectionName, StateTopic);
+            if (Listener)
+            {
+                ActiveListeners.Add(Listener);
+                Listener->OnTopicParsed.AddUObject(this, &ARoboSimAgent::HandleStateUpdate);
+                USceneExporter::WriteSimulationLog(TEXT("INFO"), FString::Printf(TEXT("ARoboSimAgent '%s' subscribed to topic: %s"), *RegisteredRobotID, *StateTopic));
+            }
+        }
+    }
+}
+
+void ARoboSimAgent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // Unregister ID
+    if (!RegisteredRobotID.IsEmpty())
+    {
+        GlobalRobotIDs.Remove(RegisteredRobotID);
+    }
+
+    // Cleanly unbind delegates
+    for (UZenohTopicListener* Listener : ActiveListeners)
+    {
+        if (Listener)
+        {
+            Listener->OnTopicParsed.RemoveAll(this);
+        }
+    }
+    ActiveListeners.Empty();
+
+    Super::EndPlay(EndPlayReason);
+}
+
+void ARoboSimAgent::HandleStateUpdate(TSharedPtr<FJsonObject> JsonObject)
+{
+    if (ApplyState(JsonObject))
+    {
+        ReceiveAgentStateUpdated();
+    }
 }
 
 void ARoboSimAgent::Tick(float DeltaTime)
@@ -74,14 +141,11 @@ bool ARoboSimAgent::CacheJointComponents()
     return true;
 }
 
-bool ARoboSimAgent::ApplyState(const FString& JsonPayload)
+bool ARoboSimAgent::ApplyState(TSharedPtr<FJsonObject> JsonObject)
 {
-    TSharedPtr<FJsonObject> JsonObject;
-    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonPayload);
-
-    if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+    if (!JsonObject.IsValid())
     {
-        USceneExporter::WriteSimulationLog(TEXT("ERROR"), TEXT("ARoboSimAgent: Failed to parse JSON payload."));
+        USceneExporter::WriteSimulationLog(TEXT("ERROR"), TEXT("ARoboSimAgent: Received invalid JSON object."));
         return false;
     }
 

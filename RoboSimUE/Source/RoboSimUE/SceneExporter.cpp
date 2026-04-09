@@ -9,6 +9,7 @@
 #include "Misc/Paths.h"
 #include "Misc/DateTime.h"
 #include "HAL/FileManager.h"
+#include "RoboSimAgent.h"
 
 // Define the static spam filter variable
 TSet<FString> USceneExporter::AlreadyWarnedActors;
@@ -87,7 +88,20 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 	
 	for (AActor* Actor : FoundActors)
 	{
-		FString ActorID = Actor->GetName();
+		FString ActorID;
+
+		// 1. Cast the Actor to see if it's one of our Agents
+		if (ARoboSimAgent* Agent = Cast<ARoboSimAgent>(Actor))
+		{
+			// It's a robot! Use the clean, deterministic ID.
+			ActorID = Agent->GetRegisteredID();
+		}
+		else
+		{
+			// It's a static mesh, cube, or plane. Use the default UE name.
+			ActorID = Actor->GetName();
+		}
+
 		FString ActorNameLower = ActorID.ToLower();
 
 		// ------------------------------------------------------------------
@@ -255,17 +269,13 @@ FString USceneExporter::GenerateWorldJSON(const UObject* WorldContextObject, con
 // IMPORT LOGIC (Runs at 60Hz - Beware File I/O!)
 // ==========================================
 
-void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags, const FString& JsonString)
+void USceneExporter::ApplyWorldStateJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags, TSharedPtr<FJsonObject> JsonObject)
 {
-	// Parse JSON String
-	TSharedPtr<FJsonObject> JsonObject;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
-
-	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	if (!JsonObject.IsValid())
 	{
 		if (!AlreadyWarnedActors.Contains(TEXT("ApplyWorldState_JSON_FAIL")))
 		{
-			WriteSimulationLog(TEXT("ERROR"), TEXT("ApplyWorldState: Failed to parse incoming JSON payload."));
+			WriteSimulationLog(TEXT("ERROR"), TEXT("ApplyWorldState: Received invalid JSON object."));
 			AlreadyWarnedActors.Add(TEXT("ApplyWorldState_JSON_FAIL"));
 		}
 		return;
@@ -335,7 +345,17 @@ void USceneExporter::BuildActorCache(const UObject* WorldContextObject, const TA
 
 	for (AActor* Actor : FoundActors)
 	{
-		CachedSimulatedActors.Add(Actor->GetName(), Actor);
+		// 1. Cast the Actor to see if it's one of our Agents
+		if (ARoboSimAgent* Agent = Cast<ARoboSimAgent>(Actor))
+		{
+			// Match the JSON! Use the deterministic ID as the cache key.
+			CachedSimulatedActors.Add(Agent->GetRegisteredID(), Actor);
+		}
+		else
+		{
+			// Fallback for static props
+			CachedSimulatedActors.Add(Actor->GetName(), Actor);
+		}
 	}
 
 	WriteSimulationLog(TEXT("INFO"), FString::Printf(TEXT("Cache built successfully. Monitoring %d actors."), CachedSimulatedActors.Num()));

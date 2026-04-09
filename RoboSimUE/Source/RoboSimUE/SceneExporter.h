@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
+#include "Dom/JsonObject.h"
 #include "SceneExporter.generated.h"
 
 /**
@@ -33,8 +34,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Simulation|Export", meta = (WorldContext = "WorldContextObject"))	
 	static FString GenerateWorldJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags);
 
-	UFUNCTION(BlueprintCallable, Category = "Simulation|Import", meta = (WorldContext = "WorldContextObject"))
-	static void ApplyWorldStateJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags, const FString& JsonString);
+	static void ApplyWorldStateJSON(const UObject* WorldContextObject, const TArray<FName>& ActorTags, TSharedPtr<FJsonObject> JsonObject);
 
 	/** 
 	 * Build the static actor cache for O(1) lookups during state application.

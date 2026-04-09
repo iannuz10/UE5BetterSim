@@ -30,6 +30,9 @@ public:
      * Called from the Zenoh C-callback thread.
      */
     void EnqueueMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload);
+    
+    /** Let the Subsystem flip the switch at runtime */
+    void SetAsyncParsing(bool bEnable) { bUseAsyncParsing = bEnable; }
 
 private:
     /** Struct to hold message data within the queue */
@@ -38,11 +41,15 @@ private:
         FName ConnectionName;
         FString Topic;
         FString Payload;
+        double EnqueueTime; 
 
-        FRawMessage() {}
-        FRawMessage(const FName& InConnName, const FString& InTopic, const FString& InPayload)
-            : ConnectionName(InConnName), Topic(InTopic), Payload(InPayload) {}
+        FRawMessage() : EnqueueTime(0.0) {}
+        FRawMessage(const FName& InConnName, const FString& InTopic, const FString& InPayload, double InTime)
+            : ConnectionName(InConnName), Topic(InTopic), Payload(InPayload), EnqueueTime(InTime) {}
     };
+
+    /** Helper function to parse and send to Game Thread */
+    static void ParseAndDispatch(TWeakObjectPtr<UZenohSubsystem> WeakSubsystem, const FName& ConnName, const FString& Topic, int64 MsgId, const FString& JsonString);
 
     /** Reference to the backend for publishing immediate ACKs */
     FZenohBackend* Backend;
@@ -56,6 +63,9 @@ private:
     /** Control flag for the thread loop */
     FThreadSafeBool bStopThread;
 
+    /** Flag to flip between ThreadPool or direct parse */
+    bool bUseAsyncParsing = false;
+    
     /** Semaphore for efficient thread waiting */
     FEvent* Semaphore;
 };

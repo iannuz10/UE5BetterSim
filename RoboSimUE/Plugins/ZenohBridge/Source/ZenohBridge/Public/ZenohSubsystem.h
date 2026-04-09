@@ -2,11 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
-#include "ZenohBackend.h"
 #include "ZenohSubsystem.generated.h"
 
-// Forward declaration
+// Forward declarations
 class FZenohWorkerThread;
+class FZenohBackend;
 
 // Enum configurations
 UENUM(BlueprintType)
@@ -44,16 +44,14 @@ struct FZenohConnectionInfo
     int32 Port = 7447;
 };
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnZenohTopicMessage, const FString&, Message);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnZenohTopicParsed, TSharedPtr<FJsonObject>);
 
-UCLASS(BlueprintType)
+UCLASS()
 class ZENOHBRIDGE_API UZenohTopicListener : public UObject
 {
     GENERATED_BODY()
 public:
-    // It only outputs the message, because the Topic and Connection are already known
-    UPROPERTY(BlueprintAssignable, Category = "Zenoh|Messaging")
-    FOnZenohTopicMessage OnMessageReceived;
+    FOnZenohTopicParsed OnTopicParsed;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnZenohGlobalMessage, const FName&, ConnectionName, const FString&, Topic, const FString&, Message);
@@ -100,17 +98,18 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Zenoh|Messaging")
     FOnZenohGlobalMessage OnGlobalMessageReceived;
 
+    UFUNCTION(BlueprintCallable, Category = "Zenoh|Performance")
+    void SetUseAsyncParsing(bool bEnableAsync);
+
     /** 
-     * Called from the background WorkerThread via AsyncTask to process clean payloads on the Game Thread.
+     * Called from the background WorkerThread via AsyncTask to process pre-parsed payloads on the Game Thread.
      */
-    void ProcessCleanPayload(const FName& ConnectionName, const FString& Topic, const FString& Payload);
+    void ProcessParsedPayload(const FName& ConnectionName, const FString& Topic, int64 MsgId, TSharedPtr<FJsonObject> ParsedJson);
 
 private:
-    void HandleZenohMessage(const FName& ConnectionName, const FString& Topic, const FString& Payload);
-
     // Multi-connection dictionary
     // Maps a name (ex. "Docker") to its specific C++ backend instance.
-    TMap<FName, TUniquePtr<FZenohBackend>> ActiveConnections;
+    TMap<FName, FZenohBackend*> ActiveConnections;
 
     // A Mutex Lock to prevent Background Threads and GameThreads from colliding
     mutable FCriticalSection ConnectionMapLock;
@@ -121,4 +120,11 @@ private:
 
     // Stores subscriptions requested BEFORE a connection is fully established (The Race Condition Fix)
     TMap<FName, TArray<FString>> PendingSubscriptions;
+
+    // Tracker map for stale messages
+    TMap<FString, int64> LastMsgIdPerTopic;
+
+private:
+    // Tracks the current performance mode so new connections inherit it
+    bool bEnableAsyncParsing = false;
 };

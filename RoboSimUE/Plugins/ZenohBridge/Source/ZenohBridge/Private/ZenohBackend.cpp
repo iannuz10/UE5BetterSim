@@ -84,7 +84,7 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
     auto* Backend = static_cast<FZenohBackend*>(context);
     if (Backend && Backend->WorkerThread)
     {
-        Backend->WorkerThread->EnqueueMessage(Backend->ConnectionName, Topic, Msg);
+        Backend->WorkerThread->EnqueueMessage(Backend->ConnectionName, Topic, MoveTemp(Msg));
     }
 }
 FZenohBackend::FZenohBackend()
@@ -134,7 +134,13 @@ bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint, UZe
     std::string JsonEndpoint = "['" + StdEndpoint + "']";
 
     zc_config_insert_json5(z_loan_mut(config), StdConfigKey.c_str(), JsonEndpoint.c_str());
+    // Force Nagle OFF 
+    zc_config_insert_json5(z_loan_mut(config), "transport/unicast/nodelay", "true");
 
+    // Disable Multicast Scouting 
+    // (Sometimes scouting packets cause micro-interruptions in the unicast stream)
+    zc_config_insert_json5(z_loan_mut(config), "scouting/multicast/enabled", "false");
+    
     // Open the session
     if (z_open(&State->Session, z_move(config), nullptr) < 0)
     {

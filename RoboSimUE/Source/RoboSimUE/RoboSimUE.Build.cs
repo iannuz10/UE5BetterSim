@@ -20,7 +20,8 @@ public class RoboSimUE : ModuleRules
 			"UMG",
 			"Slate",
 			"Json",
-			"JsonUtilities"
+			"JsonUtilities",
+			"ZenohBridge"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

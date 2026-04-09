@@ -3,7 +3,10 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Components/SceneComponent.h"
+#include "Dom/JsonObject.h"
 #include "RoboSimAgent.generated.h"
+
+class UZenohTopicListener;
 
 UCLASS()
 class ROBOSIMUE_API ARoboSimAgent : public AActor
@@ -28,12 +31,34 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoboSim|Agent")
     bool bIsMobile;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoboSim|Agent")
+    FString RobotID;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoboSim|Agent")
+    FName ConnectionName = TEXT("DefaultConnection");
+
+    UFUNCTION(BlueprintImplementableEvent, Category = "RoboSim|Events")
+    void ReceiveAgentStateUpdated();
+
+protected:
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+private:
+    void HandleStateUpdate(TSharedPtr<FJsonObject> JsonObject);
+
+    static TSet<FString> GlobalRobotIDs;
+    FString RegisteredRobotID;
+
+    UPROPERTY()
+    TArray<UZenohTopicListener*> ActiveListeners;
+
 public:    
     virtual void Tick(float DeltaTime) override;
 
     UFUNCTION(BlueprintCallable, Category = "RoboSim|Agent")
     bool CacheJointComponents();
 
-    UFUNCTION(BlueprintCallable, Category = "RoboSim|Agent")
-    bool ApplyState(const FString& JsonPayload);
+    FString GetRegisteredID() const { return RegisteredRobotID; }
+
+    bool ApplyState(TSharedPtr<FJsonObject> JsonObject);
 };
