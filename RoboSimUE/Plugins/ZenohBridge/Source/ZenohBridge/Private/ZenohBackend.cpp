@@ -1,5 +1,5 @@
 #include "ZenohBackend.h"
-#include "ZenohWorkerThread.h"
+#include "ZenohMessageRouter.h"
 #include "ZenohSubsystem.h"
 #include "Containers/StringConv.h"
 #include "Async/Async.h"
@@ -82,9 +82,9 @@ void zenoh_pimpl_callback(z_loaned_sample_t* sample, void* context)
 
     // Cast the context directly to Backend class
     auto* Backend = static_cast<FZenohBackend*>(context);
-    if (Backend && Backend->WorkerThread)
+    if (Backend && Backend->MessageRouter)
     {
-        Backend->WorkerThread->EnqueueMessage(Backend->ConnectionName, Topic, MoveTemp(Msg));
+        Backend->MessageRouter->RouteMessage(Backend->ConnectionName, Topic, MoveTemp(Msg));
     }
 }
 FZenohBackend::FZenohBackend()
@@ -111,9 +111,7 @@ bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint, UZe
     }
     
     // --- CREATE THE ISOLATED PIPELINE ---
-    WorkerThread = new FZenohWorkerThread(this, InSubsystem);
-    FString ThreadName = FString::Printf(TEXT("ZenohWorker_%s"), *ConnectionName.ToString());
-    WorkerThreadHandle = FRunnableThread::Create(WorkerThread, *ThreadName, 0, TPri_AboveNormal);
+    MessageRouter = new FZenohMessageRouter(this, InSubsystem);
 
     // Convert Unreal Strings to standard C strings
     std::string StdMode = std::string(TCHAR_TO_UTF8(*Mode));
@@ -155,20 +153,13 @@ bool FZenohBackend::Initialize(const FString& Mode, const FString& Endpoint, UZe
 
 void FZenohBackend::Shutdown()
 {
-    // 1. Clean up the thread FIRST so it stops processing
-    if (WorkerThreadHandle)
+    // 1. Clean up Router
+    if (MessageRouter)
     {
-        WorkerThread->Stop();
-        WorkerThreadHandle->WaitForCompletion();
-        delete WorkerThreadHandle;
-        WorkerThreadHandle = nullptr;
+        delete MessageRouter;
+        MessageRouter = nullptr;
     }
 
-    if (WorkerThread)
-    {
-        delete WorkerThread;
-        WorkerThread = nullptr;
-    }
 
     // 2. Clean up Zenoh session
     if (State && State->bInitialized)

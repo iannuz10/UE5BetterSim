@@ -44,13 +44,9 @@ protected:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
-    void HandleStateUpdate(TSharedPtr<FJsonObject> JsonObject);
 
     static TSet<FString> GlobalRobotIDs;
     FString RegisteredRobotID;
-
-    UPROPERTY()
-    TArray<UZenohTopicListener*> ActiveListeners;
 
 public:    
     virtual void Tick(float DeltaTime) override;

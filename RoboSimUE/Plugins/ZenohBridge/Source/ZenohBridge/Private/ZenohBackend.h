@@ -4,8 +4,7 @@
 
 // Forward declaration
 struct FZenohState;
-class FZenohWorkerThread;
-class FRunnableThread;
+class ZenohMessageRouter;
 class UZenohSubsystem;
 
 class FZenohBackend
@@ -20,11 +19,8 @@ public:
     bool Publish(const FString& Topic, const FString& Message);
     void Subscribe(const FString& Topic);
 
-    /** 
-     * Internal pointer to the worker thread. 
-     * Public so the C-callback can access it directly for speed.
-     */
-    FZenohWorkerThread* WorkerThread = nullptr;
+    /** Direct pointer to the Router */
+    class FZenohMessageRouter* MessageRouter = nullptr;
 
     /** The identifier for this connection, used for routing messages back to the subsystem */
     FName ConnectionName;
@@ -33,6 +29,4 @@ private:
     /** This pointer hides ALL Zenoh data from Unreal */
     FZenohState* State = nullptr;
 
-    /** Thread lifecycle manager */
-    FRunnableThread* WorkerThreadHandle = nullptr;
 };

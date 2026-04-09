@@ -49,14 +49,23 @@ void FZenohWorkerThread::ParseAndDispatch(TWeakObjectPtr<UZenohSubsystem> WeakSu
 
     if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
     {
-        // Always apply physics on the Game Thread
         AsyncTask(ENamedThreads::GameThread, [WeakSubsystem, ConnName, Topic, MsgId, JsonObject]()
         {
             if (WeakSubsystem.IsValid())
             {
                 WeakSubsystem->ProcessParsedPayload(ConnName, Topic, MsgId, JsonObject);
             }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("[Router] FATAL: WeakSubsystem is INVALID on the Game Thread!"));
+            }
         });
+    }
+    else
+    {
+        // TRACER DYE: If it fails here, your JSON is malformed.
+        UE_LOG(LogTemp, Error, TEXT("[Router] JSON Deserialization FAILED for Topic: %s"), *Topic);
+        UE_LOG(LogTemp, Warning, TEXT("[Router] Raw Payload Dump: %s"), *JsonString.Left(200)); // Print first 200 chars
     }
 }
 

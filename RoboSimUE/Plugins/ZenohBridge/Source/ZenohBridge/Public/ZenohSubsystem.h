@@ -5,7 +5,7 @@
 #include "ZenohSubsystem.generated.h"
 
 // Forward declarations
-class FZenohWorkerThread;
+class ZenohMessageRouter;
 class FZenohBackend;
 
 // Enum configurations

@@ -46,5 +46,8 @@ private:
     void HandleWorldStateUpdate(TSharedPtr<FJsonObject> JsonObject);
 
     UPROPERTY()
+    TMap<FString, class ARoboSimAgent*> AgentCache;
+
+    UPROPERTY()
     TArray<UZenohTopicListener*> ActiveListeners;
 };

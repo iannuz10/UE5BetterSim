@@ -35,22 +35,6 @@ void ARoboSimAgent::BeginPlay()
 
     GlobalRobotIDs.Add(RegisteredRobotID);
 
-    // Zenoh Subscription
-    FString StateTopic = FString::Printf(TEXT("sim/agent/%s/state"), *RegisteredRobotID);
-
-    if (UGameInstance* GameInstance = GetGameInstance())
-    {
-        if (UZenohSubsystem* ZenohSubsystem = GameInstance->GetSubsystem<UZenohSubsystem>())
-        {
-            UZenohTopicListener* Listener = ZenohSubsystem->SubscribeToTopic(ConnectionName, StateTopic);
-            if (Listener)
-            {
-                ActiveListeners.Add(Listener);
-                Listener->OnTopicParsed.AddUObject(this, &ARoboSimAgent::HandleStateUpdate);
-                USceneExporter::WriteSimulationLog(TEXT("INFO"), FString::Printf(TEXT("ARoboSimAgent '%s' subscribed to topic: %s"), *RegisteredRobotID, *StateTopic));
-            }
-        }
-    }
 }
 
 void ARoboSimAgent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -61,26 +45,10 @@ void ARoboSimAgent::EndPlay(const EEndPlayReason::Type EndPlayReason)
         GlobalRobotIDs.Remove(RegisteredRobotID);
     }
 
-    // Cleanly unbind delegates
-    for (UZenohTopicListener* Listener : ActiveListeners)
-    {
-        if (Listener)
-        {
-            Listener->OnTopicParsed.RemoveAll(this);
-        }
-    }
-    ActiveListeners.Empty();
-
     Super::EndPlay(EndPlayReason);
 }
 
-void ARoboSimAgent::HandleStateUpdate(TSharedPtr<FJsonObject> JsonObject)
-{
-    if (ApplyState(JsonObject))
-    {
-        ReceiveAgentStateUpdated();
-    }
-}
+
 
 void ARoboSimAgent::Tick(float DeltaTime)
 {

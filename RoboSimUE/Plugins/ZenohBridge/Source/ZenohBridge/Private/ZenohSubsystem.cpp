@@ -1,6 +1,6 @@
 #include "ZenohSubsystem.h"
 #include "ZenohBackend.h"
-#include "ZenohWorkerThread.h"
+#include "ZenohMessageRouter.h"
 #include "HAL/RunnableThread.h"
 
 // ==========================================
@@ -44,9 +44,9 @@ bool UZenohSubsystem::Connect(const FZenohConnectionInfo& ConnectionInfo)
     if (NewBackend->Initialize(ModeStr, Endpoint, this))
     {
         // Apply the current performance setting to the newly created worker
-        if (NewBackend->WorkerThread)
+        if (NewBackend->MessageRouter)
         {
-            NewBackend->WorkerThread->SetAsyncParsing(bEnableAsyncParsing);
+            NewBackend->MessageRouter->SetAsyncParsing(bEnableAsyncParsing);
         }
         
         FScopeLock Lock(&ConnectionMapLock);
@@ -166,9 +166,9 @@ void UZenohSubsystem::SetUseAsyncParsing(bool bEnableAsync)
     {
         if (FZenohBackend* Backend = Pair.Value)
         {
-            if (Backend->WorkerThread)
+            if (Backend->MessageRouter)
             {
-                Backend->WorkerThread->SetAsyncParsing(bEnableAsync);
+                Backend->MessageRouter->SetAsyncParsing(bEnableAsync);
             }
         }
     }
@@ -178,25 +178,31 @@ void UZenohSubsystem::SetUseAsyncParsing(bool bEnableAsync)
 
 void UZenohSubsystem::ProcessParsedPayload(const FName& ConnectionName, const FString& Topic, int64 MsgId, TSharedPtr<FJsonObject> ParsedJson)
 {
-    // Create the routing key
+    // 1. RECONSTRUCT THE FULL ROUTING KEY
+    // This MUST match the format in SubscribeToTopic: "SimBrain::sim/state/snapshot"
     FString RoutingKey = ConnectionName.ToString() + TEXT("::") + Topic;
 
-    // Check the tracker for stale messages
-    int64& LastSeenId = LastMsgIdPerTopic.FindOrAdd(RoutingKey, -1);
-    if (MsgId <= LastSeenId && LastSeenId != -1)
-    {
-        return; // Throw away stale data
-    }
-    
-    // Update the tracker
-    LastSeenId = MsgId;
+    // 2. AGGRESSIVE LOGGING (Force these to show up)
+    UE_LOG(LogTemp, Error, TEXT("[ZENOH] Network In: %s (MsgId: %lld)"), *RoutingKey, MsgId);
 
-    // SPECIFIC ROUTING
+    if (!ParsedJson.IsValid()) return;
+
+    // 3. FIND AND BROADCAST
     if (UZenohTopicListener** ListenerPtr = TopicListeners.Find(RoutingKey))
     {
         if (*ListenerPtr)
         {
+            UE_LOG(LogTemp, Warning, TEXT("[ZENOH] Dispatching to Manager/Agent..."));
             (*ListenerPtr)->OnTopicParsed.Broadcast(ParsedJson);
         }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ZENOH] No one is listening for Key: %s"), *RoutingKey);
+        
+        // DEBUG: Let's see what keys ARE available
+        TArray<FString> ActiveKeys;
+        TopicListeners.GetKeys(ActiveKeys);
+        UE_LOG(LogTemp, Log, TEXT("[ZENOH] Active Subscriptions: %s"), *FString::Join(ActiveKeys, TEXT(", ")));
     }
 }
