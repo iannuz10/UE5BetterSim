@@ -106,7 +106,7 @@ void ASimWorldManager::HandleWorldStateUpdate(TSharedPtr<FJsonObject> JsonObject
     // TRACER DYE 1: What fields did we actually receive?
     TArray<FString> Keys;
     JsonObject->Values.GetKeys(Keys);
-    UE_LOG(LogTemp, Warning, TEXT("[WorldManager] Received Snapshot with fields: %s"), *FString::Join(Keys, TEXT(", ")));
+    UE_LOG(LogTemp, Verbose, TEXT("[WorldManager] Received Snapshot with fields: %s"), *FString::Join(Keys, TEXT(", ")));
 
     // 1. Apply World Data
     if (JsonObject->HasField(TEXT("world")))
@@ -122,7 +122,7 @@ void ASimWorldManager::HandleWorldStateUpdate(TSharedPtr<FJsonObject> JsonObject
         const TSharedPtr<FJsonObject> AgentsObj = JsonObject->GetObjectField(TEXT("agents"));
         
         // TRACER DYE 2: How many agents did Python send?
-        UE_LOG(LogTemp, Log, TEXT("[WorldManager] Processing 'agents' update containing %d agents..."), AgentsObj->Values.Num());
+        UE_LOG(LogTemp, Verbose, TEXT("[WorldManager] Processing 'agents' update containing %d agents..."), AgentsObj->Values.Num());
 
         for (auto& Pair : AgentsObj->Values)
         {
@@ -141,12 +141,12 @@ void ASimWorldManager::HandleWorldStateUpdate(TSharedPtr<FJsonObject> JsonObject
                 else
                 {
                     // TRACER DYE 3: Cache Miss!
-                    UE_LOG(LogTemp, Error, TEXT("[WorldManager] CACHE MISS! Python sent data for Agent: '%s', but it is not in the map."), *AgentID);
+                    UE_LOG(LogTemp, Verbose, TEXT("[WorldManager] CACHE MISS! Python sent data for Agent: '%s', but it is not in the map."), *AgentID);
                     
                     // Print exactly what IS in the cache so we can compare the spelling/casing
                     TArray<FString> CacheKeys;
                     AgentCache.GetKeys(CacheKeys);
-                    UE_LOG(LogTemp, Warning, TEXT("[WorldManager] Available Cache Keys are: %s"), *FString::Join(CacheKeys, TEXT(", ")));
+                    UE_LOG(LogTemp, Verbose, TEXT("[WorldManager] Available Cache Keys are: %s"), *FString::Join(CacheKeys, TEXT(", ")));
                 }
             }
         }

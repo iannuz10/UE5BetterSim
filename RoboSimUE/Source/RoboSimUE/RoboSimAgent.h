@@ -34,9 +34,6 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoboSim|Agent")
     FString RobotID;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "RoboSim|Agent")
-    FName ConnectionName = TEXT("DefaultConnection");
-
     UFUNCTION(BlueprintImplementableEvent, Category = "RoboSim|Events")
     void ReceiveAgentStateUpdated();
 

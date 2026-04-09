@@ -1,7 +1,6 @@
 #include "ZenohSubsystem.h"
 #include "ZenohBackend.h"
 #include "ZenohMessageRouter.h"
-#include "HAL/RunnableThread.h"
 
 // ==========================================
 // SUBSYSTEM LIFECYCLE 
@@ -183,7 +182,7 @@ void UZenohSubsystem::ProcessParsedPayload(const FName& ConnectionName, const FS
     FString RoutingKey = ConnectionName.ToString() + TEXT("::") + Topic;
 
     // 2. AGGRESSIVE LOGGING (Force these to show up)
-    UE_LOG(LogTemp, Error, TEXT("[ZENOH] Network In: %s (MsgId: %lld)"), *RoutingKey, MsgId);
+    UE_LOG(LogTemp, VeryVerbose, TEXT("[ZENOH] Network In: %s (MsgId: %lld)"), *RoutingKey, MsgId);
 
     if (!ParsedJson.IsValid()) return;
 
@@ -192,7 +191,7 @@ void UZenohSubsystem::ProcessParsedPayload(const FName& ConnectionName, const FS
     {
         if (*ListenerPtr)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[ZENOH] Dispatching to Manager/Agent..."));
+            UE_LOG(LogTemp, VeryVerbose, TEXT("[ZENOH] Dispatching to Manager/Agent..."));
             (*ListenerPtr)->OnTopicParsed.Broadcast(ParsedJson);
         }
     }
